@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Rendered dispatch script — single-file-fix
+{# Every scalar template variable goes through the shellquote filter. The
+   renderer MUST also validate every key in extra_env against the regex
+   ^[A-Za-z_][A-Za-z0-9_]*$ before invoking this template — keys are
+   emitted without quoting and would otherwise enable env-key injection
+   (`FOO=bar; curl ... #` becomes a runnable command). #}
+
+set -uo pipefail
+
+TASK_DIR="$(cd "$(dirname "$0")" && pwd)"
+TASK_ID={{ task_id | shellquote }}
+GENERATED_AT={{ generated_at | shellquote }}
+CWD={{ cwd | shellquote }}
+MODEL={{ model | shellquote }}
+AGENT={{ agent | shellquote }}
+TIMEOUT_SEC={{ timeout_sec | shellquote }}
+TARGET_FILE={{ target_file | shellquote }}
+
+cd "$CWD"
+
+# Defensive defaults — see SKILL.md "Default failure-mode mitigations".
+export OPENCODE_DISABLE_AUTOCOMPACT=true
+export OPENCODE_DISABLE_AUTOUPDATE=true
+{% if extra_env %}
+{% for k, v in extra_env.items() %}
+export {{ k }}={{ v | shellquote }}
+{% endfor %}
+{% endif %}
+
+echo "[opencode-dispatch] task_id=$TASK_ID generated=$GENERATED_AT"
+echo "[opencode-dispatch] cwd=$CWD"
+echo "[opencode-dispatch] model=$MODEL agent=$AGENT timeout=${TIMEOUT_SEC}s"
+echo "[opencode-dispatch] target=$TARGET_FILE"
+
+# Pipeline outputs (all written under TASK_DIR):
+#   events.jsonl — JSON event stream from `opencode run --format json`
+#   stdout.log   — copy of stdout for inspection / </think> stripping
+#   stderr.log   — opencode stderr, kept separate for diagnosis
+#
+# `pipefail` makes $? reflect timeout/opencode's exit (rightmost non-zero),
+# not tee's. `-e` is intentionally NOT set so a non-zero pipeline does not
+# skip the exit-code capture below.
+timeout "${TIMEOUT_SEC}" opencode run \
+  --dir "$CWD" \
+  --model "$MODEL" \
+  --agent "$AGENT" \
+  --format json \
+  --dangerously-skip-permissions \
+  --file "$TARGET_FILE" \
+  < "$TASK_DIR/prompt.md" \
+  2> "$TASK_DIR/stderr.log" \
+  | tee "$TASK_DIR/events.jsonl" \
+  > "$TASK_DIR/stdout.log"
+EXIT=$?
+
+echo "[opencode-dispatch] exit=$EXIT"
+exit "$EXIT"
