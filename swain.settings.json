@@ -1,0 +1,10 @@
+{
+  "sync": {
+    "scanners": {
+      "gitleaks": { "enabled": true },
+      "trufflehog": { "enabled": false },
+      "trivy": { "enabled": false, "scanners": ["vuln", "license"], "severity": "HIGH,CRITICAL" },
+      "osv-scanner": { "enabled": false }
+    }
+  }
+}
