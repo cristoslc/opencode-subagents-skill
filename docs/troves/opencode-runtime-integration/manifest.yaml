@@ -1,0 +1,125 @@
+id: opencode-runtime-integration
+created: 2026-04-25
+refreshed: 2026-04-25
+tags:
+  - opencode
+  - subagent
+  - cli-dispatch
+  - acp
+  - http-api
+  - worktrees
+  - parallel-execution
+description: >
+  Source materials for the opencode-subagents-skill — invocation transports,
+  session/CWD model, agent system, providers, known failure modes, and
+  ecosystem wrappers. Informs SKILL.md design.
+
+freshness-ttl-defaults:
+  docs: 60d
+  github-issue: 30d
+  github-pr: 30d
+  blog: 180d
+  forum: 90d
+  repo: 30d
+
+snapshot-evidence: deferred
+snapshot-evidence-note: >
+  Sources are URL-cited and content-summarized rather than raw-snapshotted.
+  Re-run with export-snapshot.sh on refresh if strict evidence is required.
+
+sources:
+  - id: cli-run-and-attach
+    type: docs+source
+    fetched: 2026-04-25
+    freshness-ttl: 60d
+    hash: c86f9d0df08fa3a3dff6f4c9a9e2010691ff880fb2d700a548123d76251d553a
+    urls:
+      - https://opencode.ai/docs/cli/
+      - https://open-code.ai/en/docs/cli
+      - https://github.com/sst/opencode/blob/dev/packages/opencode/src/cli/cmd/run.ts
+      - https://github.com/sst/opencode/blob/dev/packages/opencode/src/cli/cmd/serve.ts
+      - https://opencode.ai/docs/server/
+      - https://gist.github.com/cakriwut/975fe71acce7a6e80f41a5b2aa916092
+      - https://cefboud.com/posts/coding-agents-internals-opencode-deepdive/
+
+  - id: http-api-and-sdks
+    type: docs+source
+    fetched: 2026-04-25
+    freshness-ttl: 60d
+    hash: 0e1be730f0daaabd6fe354b110530061a92ddc1a01d0adb8c0205693713ea435
+    urls:
+      - https://opencode.ai/docs/server/
+      - https://opencode.ai/docs/sdk/
+      - https://pkg.go.dev/github.com/sst/opencode-sdk-go
+      - https://github.com/anomalyco/opencode-sdk-python
+      - https://www.webdong.dev/en/shortpost/opencode-server/
+
+  - id: acp-and-mcp
+    type: docs+source
+    fetched: 2026-04-25
+    freshness-ttl: 60d
+    hash: 7df01df158fc113359003e41e5569dd0125961c55a367c6e7a6b38ce4a0e0402
+    urls:
+      - https://opencode.ai/docs/acp/
+      - https://github.com/sst/opencode/blob/dev/packages/opencode/src/cli/cmd/acp.ts
+      - https://github.com/sst/opencode/blob/dev/packages/opencode/src/acp/agent.ts
+      - https://agentclientprotocol.com/get-started/introduction
+
+  - id: providers-and-models
+    type: docs
+    fetched: 2026-04-25
+    freshness-ttl: 60d
+    hash: a98278efb6a999c7c5b85a73c5f4422560ae76e73be1850c853025c53a45cf7f
+    urls:
+      - https://opencode.ai/docs/providers/
+      - https://opencode.ai/docs/models/
+      - https://github.com/sst/opencode/issues/13219
+      - https://github.com/sst/opencode/issues/1329
+      - https://github.com/sst/opencode/blob/dev/packages/opencode/src/flag/flag.ts
+
+  - id: agents-sessions-output
+    type: docs+source
+    fetched: 2026-04-25
+    freshness-ttl: 60d
+    hash: 062652f898f91407f8d1cb25788dfc37a098fd551c27e431b766bd0f2df68686
+    urls:
+      - https://opencode.ai/docs/agents/
+      - https://deepwiki.com/sst/opencode/3.2-agent-system
+      - https://github.com/sst/opencode/issues/16367
+      - https://github.com/sst/opencode/issues/8460
+
+  - id: failure-modes
+    type: github-issues
+    fetched: 2026-04-25
+    freshness-ttl: 30d
+    hash: 3444b6118157438e77222f1da01305e6f2431ef4c8b6342b2f4bf1a2106ca4f7
+    urls:
+      - https://github.com/sst/opencode/issues/17516
+      - https://github.com/sst/opencode/issues/16367
+      - https://github.com/anomalyco/opencode/issues/13946
+      - https://github.com/anomalyco/opencode/issues/8203
+      - https://github.com/sst/opencode/issues/1329
+      - https://github.com/anomalyco/opencode/issues/10012
+      - https://github.com/sst/opencode/issues/4251
+
+  - id: wrappers-and-comparisons
+    type: repo+blog+gist
+    fetched: 2026-04-25
+    freshness-ttl: 90d
+    hash: fbadc8b8e2b4b77c9f90c1fc77110d68daf7dd92d8634bc2da595781e783f264
+    urls:
+      - https://github.com/awesome-opencode/awesome-opencode
+      - https://smithery.ai/skills/SpillwaveSolutions/opencode-cli
+      - https://gist.github.com/ppries/f07fd6316bbd45807dd7a1896555b05b
+      - https://getbaton.dev/agents/opencode
+      - https://github.com/sst/opencode/issues/4251
+      - https://cefboud.com/posts/coding-agents-internals-opencode-deepdive/
+      - https://www.webdong.dev/en/shortpost/opencode-server/
+
+referenced-by: []
+
+history:
+  - event: created
+    date: 2026-04-25
+    commit: "--"
+    sources: 7
