@@ -21,12 +21,16 @@ opencode-dispatch \
 Renders to `.opencode-dispatch/<task-id>/dispatch.sh`. The operator can `cd`
 to that directory and re-run `bash dispatch.sh` for an exact replay.
 
-## parallel-review-fanout (planned)
+## parallel-review-fanout — NOT IMPLEMENTED (illustrative only)
+
+> The flags below describe the intended interface. No template ships
+> for this kind yet; running it returns a missing-template error.
 
 N independent agents, N files, one shared-decisions document passed into
 each agent's prompt. Pattern validated in research-keeper INITIATIVE-003
 retro (4 agents, 9 rounds, 0 merge conflicts).
 
+<!-- NOT IMPLEMENTED — illustrative only -->
 ```
 opencode-dispatch \
   --kind parallel-review-fanout \
@@ -40,14 +44,18 @@ opencode-dispatch \
   --parallel 4
 ```
 
-Renders one `dispatch.sh` per target file under
-`.opencode-dispatch/<task-id>/<file-slug>/`, then execs them in parallel.
+Will render one `dispatch.sh` per target file under
+`.opencode-dispatch/<task-id>/<file-slug>/`, then exec them in parallel.
 
-## headless-spike (planned)
+## headless-spike — NOT IMPLEMENTED (illustrative only)
+
+> The flags below describe the intended interface. No template ships
+> for this kind yet; running it returns a missing-template error.
 
 Read-only investigation. The agent writes a report to a known path; source
 is not modified.
 
+<!-- NOT IMPLEMENTED — illustrative only -->
 ```
 opencode-dispatch \
   --kind headless-spike \
@@ -60,5 +68,5 @@ opencode-dispatch \
   --timeout 900
 ```
 
-The `explore` agent's read-only permission profile prevents accidental
-edits.
+The `explore` agent's read-only permission profile will prevent
+accidental edits.

@@ -66,6 +66,31 @@ These are baked into every flow below.
    dispatch is *for* (e.g., `single-file-fix`, `parallel-review-fanout`,
    `headless-spike`), not parameterized into a single megatemplate.
 
+## Required arguments
+
+A host runtime invokes the skill with these named arguments. The
+underlying flag names are stable and may be passed verbatim to a CLI
+entrypoint, an MCP tool, or a slash command — whichever shim the host
+uses.
+
+| Flag | Required | Type | Description |
+|------|----------|------|-------------|
+| `--kind` | yes | enum | One of the kinds in the table below. |
+| `--cwd` | yes | absolute path | Working directory; must pass `verify-cwd.sh`. |
+| `--branch` | no | string | Expected branch name; verified against `git branch --show-current`. |
+| `--worktree` | no | label | Expected worktree label; requires `--worktree-root`. |
+| `--worktree-root` | conditional | absolute path | Worktree-root prefix; required when `--worktree` is set. |
+| `--model` | yes | `provider/model` | opencode model string (e.g. `ollama-cloud/glm-5.1`). |
+| `--agent` | yes | string | opencode agent name (`build`, `general`, `explore`, or a project agent). |
+| `--target-file` | conditional | path | Required by `single-file-fix`. Path inside `--cwd`. |
+| `--prompt-file` | yes | path | Path to a markdown prompt file; rendered into the task dir as `prompt.md`. |
+| `--timeout` | no | seconds | Per-dispatch timeout. Defaults to `default_timeout_sec` in `config.yaml`. |
+| `--extra-env` | no | `K=V` (repeatable) | Extra environment for the rendered script. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`; values are shell-quoted by the renderer. |
+
+Per-kind required arguments (e.g. `--shared-decisions` for
+`parallel-review-fanout`, `--report-path` for `headless-spike`) are
+listed alongside each kind below.
+
 ## Dispatch flow
 
 1. **Parse intent** — kind, model, agent, target file(s), prompt body, CWD.
@@ -73,7 +98,8 @@ These are baked into every flow below.
    gave a worktree label or branch name, resolve to a path; if both are
    given, both must agree.
 3. **Verify CWD** — call `scripts/verify-cwd.sh <path> [--branch <name>]
-   [--worktree <label>]`. Exit non-zero aborts the dispatch.
+   [--worktree <label> --worktree-root <absolute-root>]`. Exit non-zero
+   aborts the dispatch.
 4. **Allocate task ID** — `<UTC-timestamp>-<short-hash-of-prompt>`. Create
    `.opencode-dispatch/<task-id>/`.
 5. **Render** — pick the template by kind. Render to
@@ -152,13 +178,15 @@ templates_dir: skills/opencode-dispatch/templates
 
 ## Dispatch kinds (templates)
 
-Each kind has its own template under `templates/<kind>.sh.j2`. v1 ships:
+Each available kind has its own template under `templates/<kind>.sh.j2`.
 
-| Kind | Use for |
-|------|---------|
-| `single-file-fix` | One agent edits one file from a focused prompt. |
-| `parallel-review-fanout` | N agents, N files, shared decisions doc. (Validated pattern from research-keeper INITIATIVE-003 retro.) |
-| `headless-spike` | Read-only investigation; agent writes a report file but does not edit source. |
+| Kind | Status | Use for |
+|------|--------|---------|
+| `single-file-fix` | **available** | One agent edits one file from a focused prompt. Required: `--target-file`. |
+| `parallel-review-fanout` | planned (no template) | N agents, N files, shared decisions doc. Validated pattern from research-keeper INITIATIVE-003 retro. Will require `--target-files` and `--shared-decisions`. |
+| `headless-spike` | planned (no template) | Read-only investigation; agent writes a report file but does not edit source. Will require `--report-path` and use the `explore` agent. |
+
+Selecting a `planned` kind aborts the dispatch with a clear missing-template error.
 
 Add a kind by:
 
@@ -213,8 +241,16 @@ list. JSON event stream goes to stdout; the validator parses it.
 
 **Mode B — `opencode serve` + REST** (opt-in via config).
 
+Pass credentials via `.netrc` rather than `curl -u`, which exposes the
+password in `ps` output / `/proc/<pid>/cmdline` for the lifetime of
+each request:
+
 ```
-curl -u opencode:$OPENCODE_SERVER_PASSWORD \
+NETRC="$TASK_DIR/.netrc"
+umask 077
+printf 'machine 127.0.0.1 login opencode password %s\n' \
+  "$OPENCODE_SERVER_PASSWORD" > "$NETRC"
+curl --netrc-file "$NETRC" \
   http://127.0.0.1:4096/session/<id>/message \
   -d @body.json
 ```
@@ -243,10 +279,10 @@ same worktree in a session.
 
 - Trove: `opencode-runtime-integration@4d62897` —
   `docs/troves/opencode-runtime-integration/synthesis.md` and source files.
+  Failure-mode catalogue lives at
+  `docs/troves/opencode-runtime-integration/sources/failure-modes/failure-modes.md`.
 - Field evidence:
   `~/Documents/code/research-keeper/docs/swain-retro/2026-04-25-multi-round-design-iteration.md`
   (4-agent parallel `opencode run` pattern, validated over 9 rounds and
   36 agent-rounds with zero merge conflicts).
-- Failure-mode source list: `references/failure-modes.md` (mirror of trove's
-  `failure-modes` source for in-skill reference).
 - Examples: `references/examples.md`.
