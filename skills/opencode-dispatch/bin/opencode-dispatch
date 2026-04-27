@@ -61,6 +61,18 @@ ALLOWLIST: dict[str, dict[str, Any]] = {
         # Default for any kind not listed:
         "_default": "reject",
     },
+    # Each parallel child agent gets its own --target-file context, so
+    # the same allowlist as single-file-fix applies per-child.
+    "parallel-review-fanout": {
+        "read": "allow",
+        "search": "allow",
+        "edit": "target_only",
+        "execute": "reject",
+        "delete": "reject",
+        "move": "reject",
+        "fetch": "reject",
+        "_default": "reject",
+    },
 }
 
 
@@ -460,6 +472,141 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
 
 
 # ---------------------------------------------------------------------------
+# parallel-review-fanout: N independent children, one opencode acp each.
+
+import copy
+import re
+import socket
+
+
+def file_slug(path: str) -> str:
+    """Stable, filesystem-safe slug for a path. Used as child task-dir name."""
+    s = re.sub(r"[^A-Za-z0-9._-]+", "-", path.strip("/").strip())
+    return s[:80].strip("-") or "target"
+
+
+def find_free_port(start: int, host: str = "127.0.0.1", limit: int = 64) -> int:
+    """Find a free TCP port at or after `start`. Raises if none in `limit`."""
+    for p in range(start, start + limit):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+            except OSError:
+                continue
+            return p
+    raise RuntimeError(f"no free port in [{start}, {start + limit})")
+
+
+async def _run_one_child(idx: int, target_rel: str, args: argparse.Namespace,
+                         cfg: Config, parent_task_dir: Path,
+                         shared_decisions_text: str, per_file_prompt: str,
+                         port: int, semaphore: asyncio.Semaphore) -> dict:
+    """Run a single child dispatch. Returns a result record."""
+    async with semaphore:
+        target_abs = (args.cwd / target_rel).resolve()
+        if not target_abs.is_relative_to(args.cwd.resolve()):
+            return {"target": target_rel, "ok": False,
+                    "reason": "target outside cwd", "task_dir": None, "exit": 2}
+        if not target_abs.exists():
+            return {"target": target_rel, "ok": False,
+                    "reason": "target does not exist", "task_dir": None, "exit": 2}
+
+        slug = file_slug(target_rel)
+        child_task_dir = parent_task_dir / slug
+        child_task_dir.mkdir(exist_ok=True)
+        combined = (shared_decisions_text.rstrip()
+                    + "\n\n---\n\n"
+                    + per_file_prompt.rstrip()
+                    + "\n")
+        (child_task_dir / "prompt.md").write_text(combined)
+        # Render parts using the same single-file-fix template — the
+        # parallel-review-fanout kind reuses it (text + resource_link).
+        parts = render_acp_parts("single-file-fix", combined, target_abs)
+        (child_task_dir / "prompt-parts.json").write_text(
+            json.dumps(parts, indent=2))
+
+        # Per-child args/cfg with the kind kept as parallel-review-fanout
+        # so the permission allowlist is selected correctly.
+        sub_args = copy.copy(args)
+        sub_args.target_file = target_abs
+        sub_cfg = copy.copy(cfg)
+        sub_cfg.acp_port = port
+
+        log(f"child[{idx}] target={target_rel} port={port} task_dir={child_task_dir}")
+        try:
+            exit_code = await dispatch_acp(sub_args, sub_cfg, child_task_dir,
+                                           combined, parts)
+        except Exception as e:  # noqa: BLE001
+            warn(f"child[{idx}] raised: {e}")
+            return {"target": target_rel, "ok": False, "reason": str(e),
+                    "task_dir": str(child_task_dir), "exit": 1}
+
+        # Run validate-run.sh on the child's task dir; warn-only.
+        val = subprocess.run([str(VALIDATE_RUN), str(child_task_dir)],
+                             capture_output=True, text=True)
+        if val.returncode != 0:
+            warn(f"child[{idx}] validate-run.sh exit={val.returncode}: "
+                 f"{val.stderr.strip()[:200]}")
+
+        return {
+            "target": target_rel,
+            "ok": exit_code == 0,
+            "reason": None if exit_code == 0 else f"exit={exit_code}",
+            "task_dir": str(child_task_dir),
+            "exit": exit_code,
+        }
+
+
+async def dispatch_parallel_fanout(args: argparse.Namespace, cfg: Config,
+                                   parent_task_dir: Path,
+                                   shared_decisions_text: str,
+                                   per_file_prompt: str,
+                                   target_files: list[str]) -> int:
+    """Fan out N children, one per target file, in parallel."""
+    parallelism = args.parallel if args.parallel > 0 else len(target_files)
+    semaphore = asyncio.Semaphore(parallelism)
+
+    # Allocate distinct free ports starting from cfg.acp_port.
+    ports: list[int] = []
+    next_port = cfg.acp_port
+    for _ in target_files:
+        p = find_free_port(next_port, host=cfg.acp_hostname)
+        ports.append(p)
+        next_port = p + 1
+
+    log(f"parallel-review-fanout: {len(target_files)} targets, "
+        f"parallelism={parallelism}, ports={ports}")
+
+    tasks = [
+        asyncio.create_task(_run_one_child(
+            i, t, args, cfg, parent_task_dir,
+            shared_decisions_text, per_file_prompt, ports[i], semaphore,
+        ))
+        for i, t in enumerate(target_files)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+
+    # Persist parent index for replay/audit.
+    parent_index = {
+        "kind": "parallel-review-fanout",
+        "cwd": str(args.cwd),
+        "model": args.model,
+        "agent": args.agent,
+        "parallelism": parallelism,
+        "shared_decisions_path": str(args.shared_decisions) if args.shared_decisions else None,
+        "children": results,
+    }
+    (parent_task_dir / "parent.json").write_text(json.dumps(parent_index, indent=2))
+
+    n_ok = sum(1 for r in results if r["ok"])
+    log(f"parallel-review-fanout: {n_ok}/{len(results)} children ok")
+    for r in results:
+        marker = "ok" if r["ok"] else "FAIL"
+        log(f"  [{marker}] {r['target']} exit={r['exit']} dir={r['task_dir']}")
+    return 0 if n_ok == len(results) else 2
+
+
+# ---------------------------------------------------------------------------
 # CLI entrypoint
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -473,6 +620,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--model")
     p.add_argument("--agent")
     p.add_argument("--target-file", type=Path)
+    p.add_argument("--target-files", type=str,
+                   help="Comma-separated list of target files (parallel-review-fanout)")
+    p.add_argument("--shared-decisions", type=Path,
+                   help="Path to a shared-decisions doc; prepended to every "
+                        "child's prompt (parallel-review-fanout)")
+    p.add_argument("--parallel", type=int, default=0,
+                   help="Max concurrent children (parallel-review-fanout); "
+                        "0 = unlimited (one per target)")
     p.add_argument("--prompt-file", required=True, type=Path)
     p.add_argument("--timeout", type=int)
     p.add_argument("--task-root", type=Path,
@@ -494,6 +649,11 @@ def main(argv: list[str]) -> int:
 
     if args.kind == "single-file-fix" and not args.target_file:
         fail("--target-file required for kind=single-file-fix")
+    if args.kind == "parallel-review-fanout":
+        if not args.target_files:
+            fail("--target-files required for kind=parallel-review-fanout")
+        if not args.shared_decisions:
+            fail("--shared-decisions required for kind=parallel-review-fanout")
 
     # 1) Verify CWD (fail-closed)
     verify_cwd(args.cwd, args.branch, args.worktree, args.worktree_root or cfg.worktree_root)
@@ -518,6 +678,27 @@ def main(argv: list[str]) -> int:
              "templates/cli/<kind>.sh.j2 directly until v0.3")
     if args.mode == "http":
         fail("--mode http is not implemented in v0.2")
+
+    # ---- parallel-review-fanout: orchestrate N children, then return ----
+    if args.kind == "parallel-review-fanout":
+        target_list = [t.strip() for t in args.target_files.split(",") if t.strip()]
+        if len(target_list) < 1:
+            fail("--target-files must list at least one path")
+        if len(target_list) != len(set(target_list)):
+            fail(f"--target-files contains duplicates: {target_list}")
+        sd_path = args.shared_decisions
+        if not sd_path.is_absolute():
+            sd_path = (args.cwd / sd_path).resolve()
+        if not sd_path.exists():
+            fail(f"--shared-decisions file does not exist: {sd_path}")
+        shared_decisions_text = sd_path.read_text(encoding="utf-8")
+        # Persist a copy in the parent task dir for replay/audit.
+        (task_dir / "shared-decisions.md").write_text(shared_decisions_text)
+        code = asyncio.run(dispatch_parallel_fanout(
+            args, cfg, task_dir, shared_decisions_text, prompt_text, target_list,
+        ))
+        log(f"parent task_dir={task_dir} exit={code}")
+        return code
 
     # ACP mode
     target_file = (args.cwd / args.target_file).resolve() if args.target_file else None

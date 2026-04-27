@@ -167,7 +167,7 @@ ships a per-kind allowlist; defaults are conservative.
 | Kind | Read | Write | Bash | Task / sub-dispatch |
 |------|------|-------|------|---------------------|
 | `single-file-fix` | repo | only `--target-file` | deny | deny |
-| `parallel-review-fanout` (planned) | repo | only the kind's target list | deny | deny |
+| `parallel-review-fanout` | repo | only each child's own `--target-file` (one per child) | deny | deny |
 | `headless-spike` (planned) | repo | only `--report-path` | `git status *`, `git diff *` allow; rest deny | deny |
 
 Outside the allowlist, the skill rejects. The operator can
@@ -228,9 +228,9 @@ Each available kind has matching templates under
 
 | Kind | Status | Use for |
 |------|--------|---------|
-| `single-file-fix` | **available** (CLI mode); ACP template planned | One agent edits one file from a focused prompt. Required: `--target-file`. |
-| `parallel-review-fanout` | planned (no template, either mode) | N agents, N files, shared decisions doc. Validated pattern from research-keeper INITIATIVE-003 retro. Will require `--target-files` and `--shared-decisions`. |
-| `headless-spike` | planned (no template, either mode) | Read-only investigation; agent writes a report file but does not edit source. Will require `--report-path` and use the `explore` agent. |
+| `single-file-fix` | **available** (ACP + CLI) | One agent edits one file from a focused prompt. Required: `--target-file`. |
+| `parallel-review-fanout` | **available** (ACP) | N agents, N files, shared decisions doc. Each child gets its own opencode acp on a unique port (`acp.port + i`). Field-validated against research-keeper INITIATIVE-003 (4 agents, 9 rounds, 0 merge conflicts). Required: `--target-files` (comma-separated) and `--shared-decisions` (path); optional `--parallel <N>` to throttle concurrency. |
+| `headless-spike` | planned (no template) | Read-only investigation; agent writes a report file but does not edit source. Will require `--report-path` and use the `explore` agent. |
 
 Selecting a kind whose template is missing for the chosen mode aborts
 the dispatch with a clear error.

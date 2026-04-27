@@ -66,16 +66,15 @@ replay. CLI mode requires `--dangerously-skip-permissions` and a
 permission allowlist in opencode config; it does not support live
 attach beyond the `--share` URL the model may emit.
 
-## parallel-review-fanout — NOT IMPLEMENTED (illustrative only)
+## parallel-review-fanout — ACP mode (available)
 
-> No template ships for this kind in either mode yet. Running it
-> returns a missing-template error.
+N independent children, each driven by its own `opencode acp` process
+on a distinct port. Each child gets the shared-decisions document
+prepended to its prompt and is constrained by the per-kind allowlist
+to edit only its own `--target-file`. The pattern is field-validated
+in the research-keeper INITIATIVE-003 retro (4 agents, 9 rounds, 0
+merge conflicts).
 
-N independent agents, N files, one shared-decisions document passed
-into each agent's prompt. Pattern validated in research-keeper
-INITIATIVE-003 retro (4 agents, 9 rounds, 0 merge conflicts).
-
-<!-- NOT IMPLEMENTED — illustrative only -->
 ```
 opencode-dispatch \
   --kind parallel-review-fanout \
@@ -90,8 +89,23 @@ opencode-dispatch \
   --parallel 4
 ```
 
-Will spawn N ACP sessions (one per target file) against the same
-fixed-port `opencode acp` backend, then aggregate results.
+The dispatcher allocates a free port starting from `acp.port` for
+each child and prints an `opencode attach <url> --session <id>`
+command per child so the operator can attach to any one. Children's
+artifacts land under `.opencode-dispatch/<parent-id>/<file-slug>/`;
+the parent task dir holds `parent.json` (file → child task-dir
+index) and `shared-decisions.md` (a copy of the doc as it was at
+dispatch time).
+
+Tips from the field retro:
+
+- Each round of multi-agent iteration should pre-bake every
+  cross-cutting choice in `shared-decisions-vN.md`. Don't rely on
+  agents to converge independently.
+- When iterating, commit between rounds so any agent regression is
+  cheap to roll back.
+- Below ~50 lines of change in late rounds, manual `Edit` is faster
+  than respawning a stalled LLM agent.
 
 ## headless-spike — NOT IMPLEMENTED (illustrative only)
 
