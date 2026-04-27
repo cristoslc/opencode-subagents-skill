@@ -306,7 +306,11 @@ def make_permission_handler(kind: str, target_file: Path | None):
             reason = f"kind={tool_kind} rejected by allowlist"
         elif action == "target_only":
             raw = tool.get("rawInput", {}) or {}
-            path_str = raw.get("file_path") or raw.get("filePath") or raw.get("path")
+            # opencode's edit tool uses `filepath` (one word) — observed in
+            # session/request_permission payloads against opencode 1.14.x.
+            # The other forms are kept for forward-compat.
+            path_str = (raw.get("filepath") or raw.get("file_path")
+                        or raw.get("filePath") or raw.get("path"))
             if path_str and target_file and Path(path_str).resolve() == target_file.resolve():
                 decision = "once"
                 reason = f"edit on --target-file allowed"

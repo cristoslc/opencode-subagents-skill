@@ -12,3 +12,4 @@
 .crush/skills/
 .goose/skills/
 .agents/skills/
+__pycache__/

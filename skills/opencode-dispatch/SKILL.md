@@ -149,9 +149,13 @@ Per-kind required arguments are listed alongside each kind below.
 11. **Wait for idle** — return when the session reaches the ACP idle
     state, or when `--timeout` elapses.
 12. **Post-run validate** — `scripts/validate-run.sh <task-dir>`.
-    Checks: `events.jsonl` ends at `session.status: idle`; no
-    `session.error` events; `</think>` blocks stripped from
-    `stdout.log` and `events.jsonl` (reasoning-model leakage).
+    Auto-detects ACP vs CLI mode from the events.jsonl shape. ACP
+    mode checks: the last JSON-RPC response carries
+    `result.stopReason == "end_turn"`; no error responses; surfaces
+    any `tool_call_update` notifications with `status == "failed"` as
+    warnings; strips `</think>` blocks from `stdout.log` and
+    `events.jsonl` (reasoning-model leakage). CLI mode checks: last
+    `session.status` event has `properties.status.type == "idle"`.
 13. **Return result** — exit code, task-dir path, session ID,
     attach URL. The host parent treats this as the subagent's output.
 
