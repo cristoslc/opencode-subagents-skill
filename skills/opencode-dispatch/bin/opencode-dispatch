@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["jinja2>=3.1", "PyYAML>=6"]
+# dependencies = ["jinja2>=3.1", "PyYAML>=6", "httpx>=0.27"]
 # ///
 """
 opencode-dispatch — route a subagent task through opencode.
@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import urllib.parse
@@ -73,7 +76,27 @@ ALLOWLIST: dict[str, dict[str, Any]] = {
         "fetch": "reject",
         "_default": "reject",
     },
+    # Read-only investigation. Agent writes a report to --report-path
+    # (the per-handler target_file). Bash is gated to a small read-only
+    # allowlist of git inspection commands.
+    "headless-spike": {
+        "read": "allow",
+        "search": "allow",
+        "edit": "target_only",
+        "execute": "bash_readonly",
+        "delete": "reject",
+        "move": "reject",
+        "fetch": "reject",
+        "_default": "reject",
+    },
 }
+
+# Commands allowed under the bash_readonly action. Anchored at the start
+# of the rawInput.command string, with optional leading whitespace.
+BASH_READONLY = re.compile(
+    r"^\s*(git status|git diff|git log|git show|git ls-files|git rev-parse|"
+    r"ls|cat|head|tail|wc|file)\b"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +202,244 @@ def render_acp_parts(kind: str, prompt_text: str, target_file: Path) -> list[dic
     if not isinstance(parts, list):
         fail(f"template {tpl_name} did not render a JSON array")
     return parts
+
+
+def render_cli_script(kind: str, task_id: str, cwd: Path, model: str, agent: str,
+                      timeout_sec: int, target_file: Path,
+                      extra_env: dict[str, str] | None = None) -> str:
+    """Render the CLI dispatch script for the given kind. Returns rendered text."""
+    import shlex
+    env = Environment(
+        loader=FileSystemLoader(TEMPLATES_DIR / "cli"),
+        undefined=StrictUndefined,
+        keep_trailing_newline=True,
+    )
+    env.filters["shellquote"] = lambda v: shlex.quote(str(v))
+    tpl_name = f"{kind}.sh.j2"
+    tpl_path = TEMPLATES_DIR / "cli" / tpl_name
+    if not tpl_path.exists():
+        fail(f"no CLI template for kind '{kind}': {tpl_path}")
+
+    extra_env = dict(extra_env or {})
+    # Validate env keys before rendering — keys are emitted unquoted in
+    # the template, so an attacker-controlled key could inject a command.
+    for k in extra_env:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+            fail(f"invalid extra_env key (must match ^[A-Za-z_][A-Za-z0-9_]*$): {k!r}")
+
+    tpl = env.get_template(tpl_name)
+    return tpl.render(
+        task_id=task_id,
+        generated_at=dt.datetime.now(dt.UTC).isoformat(),
+        cwd=str(cwd),
+        model=model,
+        agent=agent,
+        timeout_sec=str(timeout_sec),
+        target_file=str(target_file),
+        extra_env=extra_env,
+    )
+
+
+def dispatch_cli(args: argparse.Namespace, cfg: Config, task_dir: Path,
+                 prompt_text: str) -> int:
+    """Render the CLI template, write it to disk, and exec it."""
+    if not args.target_file:
+        fail(f"--target-file required for kind={args.kind} in --mode cli")
+    target_abs = (args.cwd / args.target_file).resolve()
+
+    extra_env = parse_extra_env(getattr(args, "extra_env", None))
+    rendered = render_cli_script(
+        kind=args.kind,
+        task_id=task_dir.name,
+        cwd=args.cwd.resolve(),
+        model=args.model,
+        agent=args.agent,
+        timeout_sec=args.timeout,
+        target_file=target_abs,
+        extra_env=extra_env,
+    )
+    script_path = task_dir / "dispatch.sh"
+    script_path.write_text(rendered)
+    script_path.chmod(0o755)
+
+    log(f"cli mode: rendered {script_path}")
+    log(f"          replay with: bash {script_path}")
+    proc = subprocess.run(
+        ["bash", str(script_path)],
+        cwd=str(args.cwd),
+    )
+    log(f"cli mode: exit={proc.returncode}")
+    return proc.returncode
+
+
+def parse_extra_env(items: list[str] | None) -> dict[str, str]:
+    """Parse a list of K=V strings into a dict. Used by --extra-env."""
+    out: dict[str, str] = {}
+    if not items:
+        return out
+    for item in items:
+        if "=" not in item:
+            fail(f"--extra-env must be K=V, got: {item!r}")
+        k, _, v = item.partition("=")
+        out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
+# HTTP serve mode: long-lived `opencode serve` driven via REST + SSE.
+
+async def _wait_for_serve_ready(url: str, timeout: float = 30.0) -> None:
+    """Poll the opencode server until /config returns 200 or timeout."""
+    import httpx
+    deadline = asyncio.get_event_loop().time() + timeout
+    async with httpx.AsyncClient(timeout=2.0) as c:
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                r = await c.get(f"{url}/config")
+                if r.status_code == 200:
+                    return
+            except (httpx.HTTPError, httpx.RequestError):
+                pass
+            await asyncio.sleep(0.25)
+    raise RuntimeError(f"opencode serve did not become ready at {url} within {timeout}s")
+
+
+async def dispatch_http(args: argparse.Namespace, cfg: Config, task_dir: Path,
+                        prompt_text: str) -> int:
+    """Drive opencode serve over its HTTP API.
+
+    Permission-relay caveat: HTTP mode does not benefit from the ACP
+    permission-ask round-trip. Issue #16367 (`serve+attach` does not
+    relay permission asks back) means tools that ask for permission
+    will hang. The operator must either configure permissive defaults
+    in opencode.json or accept the risk. This entrypoint logs a warn
+    on entry so the caller is reminded.
+    """
+    import httpx
+    if not args.target_file:
+        fail(f"--target-file required for kind={args.kind} in --mode http")
+    target_abs = (args.cwd / args.target_file).resolve()
+
+    warn("--mode http does not relay permission asks (issue #16367). "
+         "Tools that ask for permission will hang. Configure permissive "
+         "rules in opencode.json or accept the risk.")
+
+    binary = shutil.which("opencode")
+    if not binary:
+        fail("`opencode` not found on PATH")
+
+    port = find_free_port(cfg.acp_port, host=cfg.acp_hostname)
+    url = f"http://{cfg.acp_hostname}:{port}"
+    env = os.environ.copy()
+    env["OPENCODE_DISABLE_AUTOCOMPACT"] = "true"
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "true"
+    env.pop("OPENCODE_SERVER_PASSWORD", None)
+    stderr_fh = (task_dir / "stderr.log").open("w", encoding="utf-8")
+    proc = await asyncio.create_subprocess_exec(
+        binary, "serve",
+        "--port", str(port),
+        "--hostname", cfg.acp_hostname,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=stderr_fh,
+        env=env,
+        cwd=str(args.cwd),
+    )
+    log(f"spawned opencode serve pid={proc.pid} url={url}")
+
+    events_path = task_dir / "events.jsonl"
+    stdout_log = task_dir / "stdout.log"
+    events_fh = events_path.open("a", encoding="utf-8")
+    stdout_fh = stdout_log.open("a", encoding="utf-8")
+
+    sse_task: asyncio.Task | None = None
+    try:
+        await _wait_for_serve_ready(url, timeout=30)
+
+        # Start the SSE event stream BEFORE creating the session, so we
+        # capture all events including session.idle.
+        async def stream_events():
+            async with httpx.AsyncClient(timeout=None) as c:
+                async with c.stream("GET", f"{url}/event") as r:
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].lstrip()
+                        events_fh.write(payload + "\n")
+                        events_fh.flush()
+                        try:
+                            ev = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        # Mirror text deltas to stdout.log for parity.
+                        if ev.get("type") == "message.part.updated":
+                            part = ev.get("properties", {}).get("part", {}) or {}
+                            if part.get("type") == "text" and part.get("text"):
+                                stdout_fh.write(part["text"]); stdout_fh.flush()
+        sse_task = asyncio.create_task(stream_events())
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(args.timeout, connect=5.0)) as c:
+            # 1) Create session
+            r = await c.post(f"{url}/session", json={"title": task_dir.name})
+            r.raise_for_status()
+            session_id = r.json()["id"]
+            log(f"session created -> id={session_id}")
+            log(f"attach: opencode attach {url} --session {session_id}")
+            (task_dir / "session.json").write_text(json.dumps({
+                "sessionId": session_id, "model": args.model, "agent": args.agent,
+                "cwd": str(args.cwd), "attach_url": url, "transport": "http",
+            }, indent=2))
+
+            # 2) Send prompt — `parts` is the message-part list.
+            # The HTTP API's part-type set is narrower than ACP's; the
+            # safe shape is a single text part. The target file path is
+            # appended so the agent can use its read tool to fetch it.
+            text = (prompt_text.rstrip()
+                    + f"\n\nTarget file (use the read tool to load it): {target_abs}\n")
+            parts = [{"type": "text", "text": text}]
+            body = {
+                "agent": args.agent,
+                "model": {
+                    "providerID": args.model.split("/")[0],
+                    "modelID": "/".join(args.model.split("/")[1:]),
+                },
+                "parts": parts,
+            }
+            (task_dir / "prompt-request.json").write_text(json.dumps(body, indent=2))
+
+            try:
+                r = await c.post(f"{url}/session/{session_id}/message", json=body)
+            except httpx.HTTPError as e:
+                warn(f"POST /session/{session_id}/message failed: {e}")
+                return 1
+            if r.status_code >= 400:
+                warn(f"POST /session/{session_id}/message returned {r.status_code}: {r.text[:300]}")
+                return 1
+            log(f"prompt completed: status={r.status_code}")
+            # Give the SSE stream up to 3 seconds to drain any trailing
+            # `session.status: idle` event. POST returns when the response
+            # body is generated, but the bus's `session.status` transition
+            # to idle can lag by a tick.
+            await asyncio.sleep(3.0)
+            return 0
+    except Exception as e:  # noqa: BLE001
+        warn(f"http dispatch failed: {e}")
+        return 1
+    finally:
+        events_fh.close()
+        stdout_fh.close()
+        if sse_task is not None:
+            sse_task.cancel()
+            try:
+                await sse_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +590,15 @@ def make_permission_handler(kind: str, target_file: Path | None):
             else:
                 decision = "reject"
                 reason = f"edit on '{path_str}' rejected (only --target-file allowed)"
+        elif action == "bash_readonly":
+            raw = tool.get("rawInput", {}) or {}
+            cmd = (raw.get("command") or "").strip()
+            if BASH_READONLY.match(cmd):
+                decision = "once"
+                reason = f"bash readonly allowed: {cmd[:80]}"
+            else:
+                decision = "reject"
+                reason = f"bash command not in readonly allowlist: {cmd[:80]}"
         else:
             decision = "reject"
             reason = f"unknown allowlist action '{action}', defaulting to reject"
@@ -473,10 +743,6 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
 
 # ---------------------------------------------------------------------------
 # parallel-review-fanout: N independent children, one opencode acp each.
-
-import copy
-import re
-import socket
 
 
 def file_slug(path: str) -> str:
@@ -628,6 +894,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--parallel", type=int, default=0,
                    help="Max concurrent children (parallel-review-fanout); "
                         "0 = unlimited (one per target)")
+    p.add_argument("--report-path", type=Path,
+                   help="Path to write the investigation report to "
+                        "(headless-spike). Relative to --cwd.")
+    p.add_argument("--extra-env", action="append", metavar="K=V",
+                   help="Extra environment variable for the rendered script "
+                        "(--mode cli only; repeatable). Keys must match "
+                        "^[A-Za-z_][A-Za-z0-9_]*$.")
     p.add_argument("--prompt-file", required=True, type=Path)
     p.add_argument("--timeout", type=int)
     p.add_argument("--task-root", type=Path,
@@ -654,6 +927,16 @@ def main(argv: list[str]) -> int:
             fail("--target-files required for kind=parallel-review-fanout")
         if not args.shared_decisions:
             fail("--shared-decisions required for kind=parallel-review-fanout")
+    if args.kind == "headless-spike":
+        if not args.report_path:
+            fail("--report-path required for kind=headless-spike")
+        # `explore` is opencode's read-only built-in agent; it's the
+        # natural default but the operator can override.
+        if args.agent == cfg.default_agent and cfg.default_agent == "build":
+            args.agent = "explore"
+        # report-path becomes the target_file for the per-handler
+        # `target_only` allowlist rule on edits.
+        args.target_file = args.report_path
 
     # 1) Verify CWD (fail-closed)
     verify_cwd(args.cwd, args.branch, args.worktree, args.worktree_root or cfg.worktree_root)
@@ -674,10 +957,31 @@ def main(argv: list[str]) -> int:
     (task_dir / "prompt.md").write_text(prompt_text)
 
     if args.mode == "cli":
-        fail("--mode cli is not yet wired into this entrypoint; use the rendered "
-             "templates/cli/<kind>.sh.j2 directly until v0.3")
+        if args.kind == "parallel-review-fanout":
+            fail("--mode cli not supported for kind=parallel-review-fanout "
+                 "(orchestration is ACP-only). Use --mode acp.")
+        code = dispatch_cli(args, cfg, task_dir, prompt_text)
+        val = subprocess.run([str(VALIDATE_RUN), str(task_dir)],
+                             capture_output=True, text=True)
+        sys.stderr.write(val.stderr)
+        sys.stdout.write(val.stdout)
+        if val.returncode != 0:
+            warn(f"validate-run.sh exited {val.returncode}")
+        log(f"task_dir={task_dir} exit={code}")
+        return code
     if args.mode == "http":
-        fail("--mode http is not implemented in v0.2")
+        if args.kind == "parallel-review-fanout":
+            fail("--mode http not supported for kind=parallel-review-fanout. "
+                 "Use --mode acp.")
+        code = asyncio.run(dispatch_http(args, cfg, task_dir, prompt_text))
+        val = subprocess.run([str(VALIDATE_RUN), str(task_dir)],
+                             capture_output=True, text=True)
+        sys.stderr.write(val.stderr)
+        sys.stdout.write(val.stdout)
+        if val.returncode != 0:
+            warn(f"validate-run.sh exited {val.returncode}")
+        log(f"task_dir={task_dir} exit={code}")
+        return code
 
     # ---- parallel-review-fanout: orchestrate N children, then return ----
     if args.kind == "parallel-review-fanout":
@@ -715,7 +1019,7 @@ def main(argv: list[str]) -> int:
     sys.stderr.write(val.stderr)
     sys.stdout.write(val.stdout)
     if val.returncode != 0:
-        warn(f"validate-run.sh exited {val.returncode} (note: today's validator targets CLI-mode events; ACP-mode validator is planned)")
+        warn(f"validate-run.sh exited {val.returncode}")
 
     log(f"task_dir={task_dir} exit={code}")
     return code

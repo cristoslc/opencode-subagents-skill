@@ -41,10 +41,15 @@ STDOUT="$TASK_DIR/stdout.log"
 
 [ -s "$EVENTS" ] || err "events.jsonl missing or empty — likely silent stall"
 
-# Detect mode by checking whether the first line carries a jsonrpc field.
+# Detect mode from the events.jsonl shape:
+#   acp  — first line has a `jsonrpc` field (JSON-RPC envelope).
+#   http — events use `session.idle` or `message.part.updated` (HTTP SSE).
+#   cli  — events use `step_start` / `step_finish` (opencode run --format json).
 FIRST_HAS_JSONRPC=$(head -n 1 "$EVENTS" | jq -r '.jsonrpc // empty' 2>/dev/null || true)
 if [ -n "$FIRST_HAS_JSONRPC" ]; then
   MODE="acp"
+elif jq -e 'select(.type=="session.idle" or .type=="server.connected" or .type=="message.part.updated")' "$EVENTS" >/dev/null 2>&1; then
+  MODE="http"
 else
   MODE="cli"
 fi
@@ -81,15 +86,41 @@ case "$MODE" in
     fi
     ;;
 
-  cli)
-    # opencode --format json events shape:
-    # {"type":"session.status","properties":{"status":{"type":"idle|...|error"}}}
+  http)
+    # opencode serve SSE event stream. The idle signal is a
+    # session.status event with properties.status.type == "idle".
+    # The earlier "busy" transitions are normal mid-flight.
     LAST_STATUS=$(jq -r 'select(.type=="session.status") | .properties.status.type // empty' "$EVENTS" | tail -1)
-    [ "$LAST_STATUS" = "idle" ] \
-      || err "stream did not end at session.status:idle (last status: '${LAST_STATUS:-<none>}')"
-
+    case "$LAST_STATUS" in
+      idle) ;;
+      "")   err "no session.status event in stream — likely silent stall" ;;
+      *)    warn "stream ended with session.status='$LAST_STATUS' (not idle)" ;;
+    esac
     if jq -e 'select(.type=="session.error")' "$EVENTS" >/dev/null 2>&1; then
       warn "session.error events present — see $EVENTS"
+    fi
+    ;;
+
+  cli)
+    # opencode run --format json emits message-part events:
+    #   step_start / step_finish — agent step boundaries (top-level type)
+    #   text                     — assistant text deltas
+    #   tool_use                 — tool-call records
+    #   reasoning                — only when --thinking is set
+    # The completion signal is the last step_finish with part.reason == "stop".
+    # A reason of "tool-calls" means the step yielded to a tool and another
+    # step is coming; a reason of "max_tokens" / "max_turn_requests" /
+    # "refusal" / "error" indicates a non-clean stop.
+    LAST_REASON=$(jq -r 'select(.type=="step_finish") | .part.reason // empty' "$EVENTS" | tail -1)
+    case "$LAST_REASON" in
+      stop) ;;
+      "")   err "no step_finish event in stream — likely silent stall" ;;
+      tool-calls) err "stream ended on a tool-call step (no final stop)" ;;
+      *)    warn "stream ended with step_finish.reason='$LAST_REASON' (not stop)" ;;
+    esac
+
+    if jq -e 'select(.type=="error" or .type=="session.error")' "$EVENTS" >/dev/null 2>&1; then
+      warn "error event(s) present — see $EVENTS"
     fi
     ;;
 esac

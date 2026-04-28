@@ -15,7 +15,7 @@ target = Path("/tmp/sandbox/src/calc.py")
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text("placeholder\n")
 
-cases = [
+single_file_fix_cases = [
     ("read",                       {"toolCall": {"kind": "read",   "title": "read",
                                                   "rawInput": {"filepath": "/tmp/sandbox/some/other.py"}}}, "once"),
     ("search",                     {"toolCall": {"kind": "search", "title": "search",
@@ -34,15 +34,46 @@ cases = [
     ("missing rawInput → reject",  {"toolCall": {"kind": "edit",   "title": "edit"}}, "reject"),
 ]
 
+# headless-spike has the same edit-on-target rule but adds bash_readonly.
+headless_spike_cases = [
+    ("git status (allowed)",       {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "git status --short"}}}, "once"),
+    ("git diff (allowed)",         {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "  git diff src/foo.py"}}}, "once"),
+    ("git log (allowed)",          {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "git log --oneline -3"}}}, "once"),
+    ("ls (allowed)",               {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "ls -la src"}}}, "once"),
+    ("cat (allowed)",              {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "cat src/foo.py"}}}, "once"),
+    ("rm (rejected)",              {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "rm -rf /tmp/anything"}}}, "reject"),
+    ("git push (rejected)",        {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": "git push origin main"}}}, "reject"),
+    ("empty command (rejected)",   {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {"command": ""}}}, "reject"),
+    ("missing command (rejected)", {"toolCall": {"kind": "execute", "title": "bash",
+                                                  "rawInput": {}}}, "reject"),
+    ("edit on report path",        {"toolCall": {"kind": "edit",   "title": "edit",
+                                                  "rawInput": {"filepath": str(target)}}}, "once"),
+    ("edit on source file",        {"toolCall": {"kind": "edit",   "title": "edit",
+                                                  "rawInput": {"filepath": "/tmp/sandbox/src/other.py"}}}, "reject"),
+    ("read (allowed)",             {"toolCall": {"kind": "read",   "title": "read",
+                                                  "rawInput": {"filepath": "/tmp/sandbox/src/other.py"}}}, "once"),
+]
+
 failures = 0
-for desc, params, expected in cases:
-    handler = ocd.make_permission_handler("single-file-fix", target)
-    result = handler(params)
-    actual = result["optionId"]
-    ok = actual == expected
-    print(f"[{'PASS' if ok else 'FAIL'}] {desc}: expected={expected} got={actual}")
-    if not ok:
-        failures += 1
+for kind, cases in [("single-file-fix", single_file_fix_cases),
+                    ("headless-spike",  headless_spike_cases)]:
+    print(f"=== kind={kind} ===")
+    for desc, params, expected in cases:
+        handler = ocd.make_permission_handler(kind, target)
+        result = handler(params)
+        actual = result["optionId"]
+        ok = actual == expected
+        print(f"[{'PASS' if ok else 'FAIL'}] {desc}: expected={expected} got={actual}")
+        if not ok:
+            failures += 1
 
 target.unlink()
 target.parent.rmdir()

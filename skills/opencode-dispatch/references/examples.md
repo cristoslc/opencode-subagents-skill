@@ -107,27 +107,71 @@ Tips from the field retro:
 - Below ~50 lines of change in late rounds, manual `Edit` is faster
   than respawning a stalled LLM agent.
 
-## headless-spike — NOT IMPLEMENTED (illustrative only)
+## headless-spike — ACP mode (available)
 
-> No template ships for this kind in either mode yet. Running it
-> returns a missing-template error.
+Read-only investigation. The agent uses `read`/`search` plus a small
+read-only bash allowlist (`git status`, `git diff`, `git log`,
+`git show`, `git ls-files`, `ls`, `cat`, `head`, `tail`, `wc`,
+`file`) and writes its report to `--report-path`. Source files are
+never modified — the skill's allowlist enforces this even if the
+underlying agent attempts an edit elsewhere.
 
-Read-only investigation. The agent writes a report to a known path;
-source is not modified.
-
-<!-- NOT IMPLEMENTED — illustrative only -->
 ```
 opencode-dispatch \
   --kind headless-spike \
   --mode acp \
   --cwd /Users/cristos/Documents/code/myrepo \
   --branch main \
-  --model anthropic/claude-sonnet-4-5 \
-  --agent explore \
-  --report-path reports/spike-2026-04-27.md \
+  --model ollama-cloud/devstral-small-2:24b \
+  --report-path reports/spike-2026-04-28.md \
   --prompt-file prompt.md \
   --timeout 900
 ```
 
-The `explore` agent's read-only permission profile, combined with the
-skill's `headless-spike` allowlist, will prevent accidental edits.
+`--agent` defaults to `explore` (opencode's read-only built-in) when
+the operator doesn't override it.
+
+## CLI mode example (`--mode cli`, available)
+
+Same `single-file-fix` invocation as the ACP example, with `--mode cli`
+substituted:
+
+```
+opencode-dispatch \
+  --kind single-file-fix \
+  --mode cli \
+  --cwd /Users/cristos/Documents/code/myrepo \
+  --branch feature/auth-rewrite \
+  --model ollama-cloud/glm-5.1 \
+  --agent build \
+  --target-file src/auth/middleware.ts \
+  --prompt-file prompt.md \
+  --timeout 600
+```
+
+Renders `templates/cli/single-file-fix.sh.j2` to
+`.opencode-dispatch/<task-id>/dispatch.sh` and execs it. Replay later
+with `bash <task-dir>/dispatch.sh`. macOS without coreutils' `gtimeout`
+on PATH will warn and run without timeout enforcement.
+
+## HTTP mode example (`--mode http`, available with caveat)
+
+Same shape, `--mode http`:
+
+```
+opencode-dispatch \
+  --kind single-file-fix \
+  --mode http \
+  --cwd /Users/cristos/Documents/code/myrepo \
+  --branch feature/auth-rewrite \
+  --model ollama-cloud/glm-5.1 \
+  --agent build \
+  --target-file src/auth/middleware.ts \
+  --prompt-file prompt.md \
+  --timeout 600
+```
+
+Spawns `opencode serve` per task and drives it via REST. **HTTP mode
+does not relay permission asks** (issue #16367) — configure permissive
+rules in `opencode.json` or accept the risk that ask-tools will hang.
+For most cases, prefer ACP mode.

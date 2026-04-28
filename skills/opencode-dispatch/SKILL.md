@@ -12,7 +12,7 @@ description: >
   the preferred backend, or when the task benefits from a model the host
   doesn't natively support, or when parallel fanout with per-task
   isolation is required.
-version: 0.2.0
+version: 0.3.0
 status: draft
 ---
 
@@ -168,7 +168,7 @@ ships a per-kind allowlist; defaults are conservative.
 |------|------|-------|------|---------------------|
 | `single-file-fix` | repo | only `--target-file` | deny | deny |
 | `parallel-review-fanout` | repo | only each child's own `--target-file` (one per child) | deny | deny |
-| `headless-spike` (planned) | repo | only `--report-path` | `git status *`, `git diff *` allow; rest deny | deny |
+| `headless-spike` | repo | only `--report-path` | readonly allowlist (see kinds table) | deny |
 
 Outside the allowlist, the skill rejects. The operator can
 override per-task with `--permission-override <rule>` (logged) or via
@@ -228,9 +228,9 @@ Each available kind has matching templates under
 
 | Kind | Status | Use for |
 |------|--------|---------|
-| `single-file-fix` | **available** (ACP + CLI) | One agent edits one file from a focused prompt. Required: `--target-file`. |
-| `parallel-review-fanout` | **available** (ACP) | N agents, N files, shared decisions doc. Each child gets its own opencode acp on a unique port (`acp.port + i`). Field-validated against research-keeper INITIATIVE-003 (4 agents, 9 rounds, 0 merge conflicts). Required: `--target-files` (comma-separated) and `--shared-decisions` (path); optional `--parallel <N>` to throttle concurrency. |
-| `headless-spike` | planned (no template) | Read-only investigation; agent writes a report file but does not edit source. Will require `--report-path` and use the `explore` agent. |
+| `single-file-fix` | **available** (ACP + CLI + HTTP) | One agent edits one file from a focused prompt. Required: `--target-file`. |
+| `parallel-review-fanout` | **available** (ACP) | N agents, N files, shared decisions doc. Each child gets its own opencode acp on a unique port (`acp.port + i`). Field-validated against research-keeper INITIATIVE-003 (4 agents, 9 rounds, 0 merge conflicts). Required: `--target-files` (comma-separated) and `--shared-decisions` (path); optional `--parallel <N>` to throttle concurrency. ACP-only — orchestration depends on per-child sessions. |
+| `headless-spike` | **available** (ACP) | Read-only investigation; agent writes a report file but does not edit source. Required: `--report-path`. Defaults to `--agent explore` (opencode's read-only built-in). The kind's allowlist permits `read`, `search`, `edit`-only-on-`--report-path`, and a small bash readonly set (`git status`, `git diff`, `git log`, `git show`, `git ls-files`, `git rev-parse`, `ls`, `cat`, `head`, `tail`, `wc`, `file`); everything else is rejected. |
 
 Selecting a kind whose template is missing for the chosen mode aborts
 the dispatch with a clear error.
@@ -246,72 +246,62 @@ Add a kind by:
 Don't subclass templates or add j2 inheritance for v1. Copy-paste
 between templates beats premature abstraction.
 
-## Composition (v2+, not implemented)
+## Composition
 
-Layers planned on top of the v1 entrypoint without changing the flow:
+The composition axes from the v0.2 design are partially landed:
 
-- **Runtime axis** — per-host shims (`claude-code`, `codex`, `gemini`,
-  `cursor`) that translate the host's tool-call shape into this
-  skill's invocation. Lives under `templates/runtimes/<host>.j2`.
-- **Model axis** — per-provider overrides (timeout, retry,
-  structured-output shape, prompt-shape adjustments). Lives under
-  `templates/models/<provider>/<model>.j2`.
-- **Agent-type axis** — already covered by the kind-template layer.
-
-Don't pre-build composition. Wait for the second concrete need (second
-host runtime; second model with non-trivial overrides) before
-generalizing.
+- **Runtime axis** — per-host adapters under
+  `templates/runtimes/<host>/`. `claude-code/oc-dispatch.md` is
+  validated end-to-end against this repo; `codex/`, `gemini/`, and
+  `cursor/` ship illustrative snippets that have NOT been run against
+  their respective installs. See `references/runtimes.md` for the
+  status matrix.
+- **Agent-type axis** — covered by the per-kind template layer
+  (`templates/<mode>/<kind>.<ext>`).
+- **Model axis** — not yet implemented. Per-provider overrides
+  (timeout, retry, structured-output shape, prompt-shape adjustments)
+  would live under `templates/models/<provider>/<model>.j2` if a
+  concrete need surfaces. Don't pre-build it.
 
 ## Alternate modes
 
-### CLI `run` per task
+### CLI `run` per task — `--mode cli` (available)
 
-Selected by `--mode cli`. Best for fire-and-forget where live attach
-is not needed. The rendered artifact is a shell script
-(`templates/cli/<kind>.sh.j2`) that wraps `opencode run --format json`
-in `timeout` and writes `events.jsonl`, `stdout.log`, `stderr.log`.
-This is what `single-file-fix.sh.j2` does today.
+Best for fire-and-forget where live attach is not needed. The
+dispatcher renders `templates/cli/<kind>.sh.j2` to `dispatch.sh` in
+the task dir, then exec's it. The script wraps `opencode run --format
+json` in `timeout` (or `gtimeout`; falls back to no timeout with a
+warning when neither is on PATH) and writes `events.jsonl`,
+`stdout.log`, `stderr.log`. The operator can replay an exact run with
+`bash <task-dir>/dispatch.sh`.
 
-The CLI invocation shape:
+CLI mode requires `--dangerously-skip-permissions`. In ACP mode that
+flag is forbidden because ACP relays permission asks to the client
+instead.
 
-```
-opencode run \
-  --dir <verified-cwd> \
-  --model <provider/model> \
-  --agent <agent> \
-  --format json \
-  --dangerously-skip-permissions \
-  -f <file1> -f <file2> \
-  < prompt.md
-```
+CLI mode does not support `parallel-review-fanout` (orchestration is
+ACP-only) — use `--mode acp` for that kind.
 
-`--dangerously-skip-permissions` is required only in CLI mode. In ACP
-mode it is forbidden.
+### HTTP `serve` + REST — `--mode http` (available, with caveat)
 
-### HTTP `serve` + REST
+Best for cases where the operator wants a long-lived warm dispatcher
+that's also reachable from `opencode attach` and other HTTP clients.
+The skill spawns `opencode serve --port <fixed>` per task, sends the
+prompt via `POST /session/<id>/message` (a single text part — the
+agent uses its read tool to fetch the target file), and consumes the
+SSE event stream from `/event` until the session reaches
+`session.status: idle`.
 
-Selected by `--mode http`. Useful when the host runtime cannot speak
-ACP (no JSON-RPC stdio support) but a long-lived warm dispatcher is
-still wanted. The skill spawns `opencode serve --port <fixed>` and
-talks to it over the OpenAPI surface. Live attach works the same way
-as in ACP mode.
+**Permission-relay caveat (issue #16367).** HTTP mode does not get
+native permission-ask relay. Tools that are configured to ask for
+permission will hang. The dispatcher logs a warning at entry. To use
+HTTP mode, configure permissive rules in your project's
+`opencode.json` (e.g., `permission: { "*": "allow" }`) or accept the
+risk.
 
-Pass credentials via `.netrc` rather than `curl -u`:
-
-```
-NETRC="$TASK_DIR/.netrc"
-umask 077
-printf 'machine 127.0.0.1 login opencode password %s\n' \
-  "$OPENCODE_SERVER_PASSWORD" > "$NETRC"
-curl --netrc-file "$NETRC" \
-  http://127.0.0.1:4096/session/<id>/message \
-  -d @body.json
-```
-
-Body shape per opencode/docs/server. SSE events at `/event`. The skill
-reuses one server per worktree; sessions are tagged with the task-id.
-HTTP mode does NOT get native permission relay — issue #16367 still
-applies.
+If you need both live attach AND permission-relay safety, use ACP
+mode — its embedded HTTP server is also `opencode attach`-reachable
+when the port is fixed.
 
 ## What this skill does NOT do
 

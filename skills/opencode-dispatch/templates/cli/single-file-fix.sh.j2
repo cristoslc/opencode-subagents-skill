@@ -41,7 +41,17 @@ echo "[opencode-dispatch] target=$TARGET_FILE"
 # `pipefail` makes $? reflect timeout/opencode's exit (rightmost non-zero),
 # not tee's. `-e` is intentionally NOT set so a non-zero pipeline does not
 # skip the exit-code capture below.
-timeout "${TIMEOUT_SEC}" opencode run \
+#
+# macOS doesn't ship coreutils' timeout(1) by default. Prefer gtimeout,
+# fall back to timeout, then to no timeout (with a warning).
+TIMEOUT_BIN="$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null || true)"
+if [ -n "$TIMEOUT_BIN" ]; then
+  TIMEOUT_PREFIX=("$TIMEOUT_BIN" "$TIMEOUT_SEC")
+else
+  echo "[opencode-dispatch] warn: no timeout(1)/gtimeout on PATH; running without timeout" >&2
+  TIMEOUT_PREFIX=()
+fi
+"${TIMEOUT_PREFIX[@]+"${TIMEOUT_PREFIX[@]}"}" opencode run \
   --dir "$CWD" \
   --model "$MODEL" \
   --agent "$AGENT" \
