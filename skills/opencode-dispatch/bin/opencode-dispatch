@@ -659,28 +659,39 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
                        prompt_text: str, parts: list[dict]) -> int:
     proc = await spawn_opencode_acp(cfg, task_dir, args.cwd.resolve())
 
+    # Resolve target_file against args.cwd so the permission handler's
+    # path comparison matches the absolute path the agent will send in
+    # rawInput.filepath. Bare Path(args.target_file).resolve() would
+    # resolve against Python's CWD (where the user invoked dispatch),
+    # which is wrong for relative --target-file / --report-path values.
+    target_resolved = (args.cwd / args.target_file).resolve() if args.target_file else None
     client = AcpClient(
         proc=proc,
         events_path=task_dir / "events.jsonl",
         stdout_path=task_dir / "stdout.log",
-        permission_handler=make_permission_handler(args.kind, Path(args.target_file).resolve() if args.target_file else None),
+        permission_handler=make_permission_handler(args.kind, target_resolved),
     )
     reader = asyncio.create_task(client.read_loop())
 
     try:
-        # 1) initialize
+        # 1) initialize.
+        # We deliberately advertise fs.{read,write}TextFile = false: this
+        # client doesn't implement the fs/* delegations and opencode will
+        # fall back to its own filesystem tools (which the per-kind
+        # allowlist gates correctly). Advertising true caused opencode
+        # to send fs/write_text_file requests we couldn't honour.
         init_resp = await client.request(
             "initialize",
             {
                 "protocolVersion": 1,
                 "clientCapabilities": {
-                    "fs": {"readTextFile": True, "writeTextFile": True},
+                    "fs": {"readTextFile": False, "writeTextFile": False},
                     "terminal": False,
                 },
                 "clientInfo": {
                     "name": "opencode-dispatch",
                     "title": "opencode-dispatch",
-                    "version": "0.2.0",
+                    "version": "0.3.0",
                 },
             },
             timeout=30,
@@ -915,6 +926,9 @@ def main(argv: list[str]) -> int:
     cfg = load_config(repo_root)
     args.cwd = repo_root
     args.model = args.model or cfg.default_model
+    # Track whether agent was explicitly chosen; the headless-spike
+    # default-to-explore logic below needs to know.
+    agent_explicit = args.agent is not None
     args.agent = args.agent or cfg.default_agent
     args.timeout = args.timeout or cfg.default_timeout_sec
     if not args.model:
@@ -930,9 +944,10 @@ def main(argv: list[str]) -> int:
     if args.kind == "headless-spike":
         if not args.report_path:
             fail("--report-path required for kind=headless-spike")
-        # `explore` is opencode's read-only built-in agent; it's the
-        # natural default but the operator can override.
-        if args.agent == cfg.default_agent and cfg.default_agent == "build":
+        # `explore` is opencode's read-only built-in agent; default to
+        # it only when the operator did NOT explicitly pick something.
+        # The skill's allowlist is the safety boundary either way.
+        if not agent_explicit:
             args.agent = "explore"
         # report-path becomes the target_file for the per-handler
         # `target_only` allowlist rule on edits.

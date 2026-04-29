@@ -168,11 +168,50 @@ ships a per-kind allowlist; defaults are conservative.
 |------|------|-------|------|---------------------|
 | `single-file-fix` | repo | only `--target-file` | deny | deny |
 | `parallel-review-fanout` | repo | only each child's own `--target-file` (one per child) | deny | deny |
-| `headless-spike` | repo | only `--report-path` | readonly allowlist (see kinds table) | deny |
+| `headless-spike` | repo | only `--report-path` | readonly allowlist (see "Bash gating" note) | deny |
 
 Outside the allowlist, the skill rejects. The operator can
 override per-task with `--permission-override <rule>` (logged) or via
 the attached TUI when answering the permission prompt out-of-band.
+
+**Bash gating note (opencode 1.14.x).** opencode's
+`session/request_permission` payload for the bash tool sends an empty
+`rawInput` (the actual command appears later in a `tool_call_update`
+notification, after the permission decision is made). The dispatcher
+therefore cannot see the command at decision time, and the
+`bash_readonly` action degrades to "reject all bash". The safety
+property holds — destructive commands are rejected — but a fully
+permissive bash command list won't be honoured by our handler today.
+
+The recommended way to allow specific bash commands per kind is to
+configure the consumer project's `opencode.json` with explicit
+per-command rules. opencode resolves those rules **before** the ACP
+ask fires, so safe commands never reach our handler:
+
+```json
+{
+  "permission": {
+    "bash": {
+      "git status *":   "allow",
+      "git diff *":     "allow",
+      "git log *":      "allow",
+      "ls *":           "allow",
+      "cat *":          "allow",
+      "rm *":           "deny",
+      "*":              "ask"
+    }
+  }
+}
+```
+
+When opencode populates the command in the ACP ask payload (upstream
+fix), our `bash_readonly` regex will start working and this layered
+fallback will become belt-and-suspenders.
+
+The adversarial test at `tests/test_headless_spike_safety.sh`
+exercises the reject paths (edit on a non-target file, bash) and
+verifies source files and the marker file are not modified across
+runs.
 
 ## Default failure-mode mitigations
 
