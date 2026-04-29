@@ -13,3 +13,4 @@
 .goose/skills/
 .agents/skills/
 __pycache__/
+.opencode-dispatch/
