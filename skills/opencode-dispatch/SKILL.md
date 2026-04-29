@@ -174,19 +174,29 @@ Outside the allowlist, the skill rejects. The operator can
 override per-task with `--permission-override <rule>` (logged) or via
 the attached TUI when answering the permission prompt out-of-band.
 
-**Bash gating note (opencode 1.14.x).** opencode's
-`session/request_permission` payload for the bash tool sends an empty
-`rawInput` (the actual command appears later in a `tool_call_update`
-notification, after the permission decision is made). The dispatcher
-therefore cannot see the command at decision time, and the
-`bash_readonly` action degrades to "reject all bash". The safety
-property holds — destructive commands are rejected — but a fully
-permissive bash command list won't be honoured by our handler today.
+**Bash gating: HTTP-probe workaround.** opencode 1.14.x sends
+`rawInput: {}` in `session/request_permission` for the bash tool — the
+actual command only lands later, in a `tool_call_update` notification
+after the permission decision is made. That's not enough to gate by
+command at decision time on its own, but the command is reachable a
+different way: while the permission ask is pending, `GET
+/session/<id>/message` on the embedded HTTP server returns the
+matching tool-call part with `state.input.command` already populated.
 
-The recommended way to allow specific bash commands per kind is to
-configure the consumer project's `opencode.json` with explicit
-per-command rules. opencode resolves those rules **before** the ACP
-ask fires, so safe commands never reach our handler:
+The dispatcher uses this. When the `bash_readonly` action sees an
+empty `rawInput.command`, it issues an HTTP probe to opencode's own
+server (the same one the operator can `opencode attach` to), walks
+the message list to find the tool-call part by `callID`, extracts
+`state.input.command`, and applies the regex on the real command.
+This restores the advertised behaviour: `git status` is allowed,
+`rm -f …` is rejected, and so on. Verified in the adversarial test
+at `tests/test_headless_spike_safety.sh`.
+
+**Layering with `opencode.json` (complementary, not required).** The
+HTTP-probe workaround is the dispatcher's primary mechanism. As a
+defense-in-depth layer, the consumer project can also set
+per-command rules in `opencode.json` so safe commands resolve inside
+opencode without an ACP ask at all:
 
 ```json
 {
@@ -204,9 +214,9 @@ ask fires, so safe commands never reach our handler:
 }
 ```
 
-When opencode populates the command in the ACP ask payload (upstream
-fix), our `bash_readonly` regex will start working and this layered
-fallback will become belt-and-suspenders.
+Both layers reach the same decisions; the layered config is faster
+(no ACP round-trip) and survives any future change to opencode's
+permission payload shape.
 
 The adversarial test at `tests/test_headless_spike_safety.sh`
 exercises the reject paths (edit on a non-target file, bash) and

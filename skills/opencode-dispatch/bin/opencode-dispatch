@@ -454,6 +454,13 @@ class AcpClient:
     pending: dict[int, asyncio.Future] = field(default_factory=dict)
     permission_handler: Any = None
     closed: bool = False
+    # HTTP probe context for the bash-rawInput workaround. opencode
+    # 1.14.x sends `rawInput: {}` in session/request_permission for the
+    # bash tool; the actual command is queryable via GET on the embedded
+    # HTTP server while the ask is pending. The handler reads these to
+    # build the probe URL.
+    acp_url: str = ""
+    session_id: str | None = None
 
     async def send(self, obj: dict) -> None:
         line = (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
@@ -536,8 +543,12 @@ class AcpClient:
         params = msg.get("params", {})
         if method == "session/request_permission" and self.permission_handler:
             try:
-                outcome = self.permission_handler(params)
-                await self.reply(rid, {"outcome": outcome})
+                # The handler may be async (when it needs to probe the
+                # HTTP API for the bash command — see lookup_bash_command).
+                result = self.permission_handler(params, self)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                await self.reply(rid, {"outcome": result})
             except Exception as e:
                 warn(f"permission handler raised: {e}")
                 await self.reply(rid, {"outcome": {"outcome": "selected", "optionId": "reject"}})
@@ -561,10 +572,48 @@ class AcpClient:
 # ---------------------------------------------------------------------------
 # Permission gate
 
+async def lookup_bash_command(client: "AcpClient", tool_call_id: str) -> str | None:
+    """Fetch the bash command for a pending tool call by hitting opencode's
+    HTTP API. Workaround for the empty-rawInput-on-bash-permission-ask
+    behaviour observed in opencode 1.14.x. Returns the command string, or
+    None if it can't be found."""
+    if not client.session_id or not client.acp_url:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as http:
+            r = await http.get(f"{client.acp_url}/session/{client.session_id}/message")
+            r.raise_for_status()
+            messages = r.json()
+    except Exception as e:  # noqa: BLE001
+        warn(f"lookup_bash_command: HTTP probe failed: {e}")
+        return None
+
+    # Walk the message list, find the tool-call part by callID, return the
+    # input.command. The shape (observed against opencode 1.14.19):
+    #   messages[*].parts[*]
+    #     .type == "tool"
+    #     .tool == "bash"
+    #     .callID == <toolCallId>
+    #     .state.input.command == "<command string>"
+    for msg in messages:
+        for part in msg.get("parts", []) or []:
+            if part.get("type") != "tool":
+                continue
+            if part.get("callID") != tool_call_id:
+                continue
+            state = part.get("state", {}) or {}
+            inp = state.get("input", {}) or {}
+            cmd = inp.get("command")
+            if isinstance(cmd, str) and cmd.strip():
+                return cmd.strip()
+    return None
+
+
 def make_permission_handler(kind: str, target_file: Path | None):
     rules = ALLOWLIST.get(kind, {"_default": "reject"})
 
-    def handle(params: dict) -> dict:
+    async def handle(params: dict, client: "AcpClient") -> dict:
         tool = params.get("toolCall", {}) or {}
         tool_kind = tool.get("kind") or "_default"
         action = rules.get(tool_kind, rules.get("_default", "reject"))
@@ -593,12 +642,21 @@ def make_permission_handler(kind: str, target_file: Path | None):
         elif action == "bash_readonly":
             raw = tool.get("rawInput", {}) or {}
             cmd = (raw.get("command") or "").strip()
+            # opencode 1.14.x sends rawInput={} in the bash permission ask.
+            # Probe the HTTP API for the pending tool call's input.command.
+            if not cmd:
+                tcid = tool.get("toolCallId") or tool.get("callID")
+                probed = await lookup_bash_command(client, tcid) if tcid else None
+                if probed:
+                    cmd = probed
             if BASH_READONLY.match(cmd):
                 decision = "once"
                 reason = f"bash readonly allowed: {cmd[:80]}"
             else:
                 decision = "reject"
-                reason = f"bash command not in readonly allowlist: {cmd[:80]}"
+                reason = (f"bash command not in readonly allowlist: {cmd[:80]}"
+                          if cmd else "bash command not retrievable from "
+                                       "permission ask or HTTP API")
         else:
             decision = "reject"
             reason = f"unknown allowlist action '{action}', defaulting to reject"
@@ -670,6 +728,7 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
         events_path=task_dir / "events.jsonl",
         stdout_path=task_dir / "stdout.log",
         permission_handler=make_permission_handler(args.kind, target_resolved),
+        acp_url=f"http://{cfg.acp_hostname}:{cfg.acp_port}",
     )
     reader = asyncio.create_task(client.read_loop())
 
@@ -705,6 +764,7 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
             timeout=30,
         )
         session_id = sess_resp["sessionId"]
+        client.session_id = session_id  # so the permission handler can HTTP-probe
         log(f"session/new -> sessionId={session_id}")
         log(f"attach: opencode attach http://{cfg.acp_hostname}:{cfg.acp_port} --session {session_id}")
         log(f"        (no password — server is bound to {cfg.acp_hostname} only)")

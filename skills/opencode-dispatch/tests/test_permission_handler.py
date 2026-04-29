@@ -1,8 +1,10 @@
 """Unit-test the permission allowlist without going through the model."""
+import asyncio
 import sys
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
+from unittest.mock import MagicMock
 
 DISPATCH = "/Users/cristos/Documents/code/opencode-subagents-skill/skills/opencode-dispatch/bin/opencode-dispatch"
 loader = SourceFileLoader("ocd", DISPATCH)
@@ -14,6 +16,12 @@ loader.exec_module(ocd)
 target = Path("/tmp/sandbox/src/calc.py")
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text("placeholder\n")
+
+# A stub AcpClient with no session_id, so HTTP-probe paths return None
+# and the handler falls through to its empty-command branch.
+stub_client = MagicMock()
+stub_client.session_id = None
+stub_client.acp_url = ""
 
 single_file_fix_cases = [
     ("read",                       {"toolCall": {"kind": "read",   "title": "read",
@@ -68,7 +76,7 @@ for kind, cases in [("single-file-fix", single_file_fix_cases),
     print(f"=== kind={kind} ===")
     for desc, params, expected in cases:
         handler = ocd.make_permission_handler(kind, target)
-        result = handler(params)
+        result = asyncio.run(handler(params, stub_client))
         actual = result["optionId"]
         ok = actual == expected
         print(f"[{'PASS' if ok else 'FAIL'}] {desc}: expected={expected} got={actual}")
