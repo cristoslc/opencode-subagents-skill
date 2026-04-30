@@ -1,6 +1,6 @@
 # Examples
 
-Concrete invocations of `opencode-dispatch`. Update when adding a kind
+Concrete invocations of `dispatch-opencode`. Update when adding a kind
 or a mode.
 
 ## single-file-fix — ACP mode (primary, ACP template planned)
@@ -13,7 +13,7 @@ The intended invocation:
 
 <!-- NOT IMPLEMENTED — illustrative only -->
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind single-file-fix \
   --mode acp \
   --cwd /Users/cristos/Documents/code/myrepo \
@@ -25,7 +25,7 @@ opencode-dispatch \
   --timeout 600
 ```
 
-Will produce, under `.opencode-dispatch/<task-id>/`:
+Will produce, under `.dispatch-opencode/<task-id>/`:
 
 - `prompt.md` — the raw prompt text the operator passed.
 - `prompt-parts.json` — the rendered ACP prompt-parts array
@@ -48,7 +48,7 @@ or steer the running session.
 A focused edit on one file. Backed by `templates/cli/single-file-fix.sh.j2`.
 
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind single-file-fix \
   --mode cli \
   --cwd /Users/cristos/Documents/code/myrepo \
@@ -60,7 +60,7 @@ opencode-dispatch \
   --timeout 600
 ```
 
-Renders to `.opencode-dispatch/<task-id>/dispatch.sh`. The operator
+Renders to `.dispatch-opencode/<task-id>/dispatch.sh`. The operator
 can `cd` to that directory and re-run `bash dispatch.sh` for an exact
 replay. CLI mode requires `--dangerously-skip-permissions` and a
 permission allowlist in opencode config; it does not support live
@@ -76,7 +76,7 @@ in the research-keeper INITIATIVE-003 retro (4 agents, 9 rounds, 0
 merge conflicts).
 
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind parallel-review-fanout \
   --mode acp \
   --cwd /Users/cristos/Documents/code/myrepo \
@@ -92,7 +92,7 @@ opencode-dispatch \
 The dispatcher allocates a free port starting from `acp.port` for
 each child and prints an `opencode attach <url> --session <id>`
 command per child so the operator can attach to any one. Children's
-artifacts land under `.opencode-dispatch/<parent-id>/<file-slug>/`;
+artifacts land under `.dispatch-opencode/<parent-id>/<file-slug>/`;
 the parent task dir holds `parent.json` (file → child task-dir
 index) and `shared-decisions.md` (a copy of the doc as it was at
 dispatch time).
@@ -117,7 +117,7 @@ never modified — the skill's allowlist enforces this even if the
 underlying agent attempts an edit elsewhere.
 
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind headless-spike \
   --mode acp \
   --cwd /Users/cristos/Documents/code/myrepo \
@@ -137,7 +137,7 @@ Same `single-file-fix` invocation as the ACP example, with `--mode cli`
 substituted:
 
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind single-file-fix \
   --mode cli \
   --cwd /Users/cristos/Documents/code/myrepo \
@@ -150,7 +150,7 @@ opencode-dispatch \
 ```
 
 Renders `templates/cli/single-file-fix.sh.j2` to
-`.opencode-dispatch/<task-id>/dispatch.sh` and execs it. Replay later
+`.dispatch-opencode/<task-id>/dispatch.sh` and execs it. Replay later
 with `bash <task-dir>/dispatch.sh`. macOS without coreutils' `gtimeout`
 on PATH will warn and run without timeout enforcement.
 
@@ -159,7 +159,7 @@ on PATH will warn and run without timeout enforcement.
 Same shape, `--mode http`:
 
 ```
-opencode-dispatch \
+dispatch-opencode \
   --kind single-file-fix \
   --mode http \
   --cwd /Users/cristos/Documents/code/myrepo \

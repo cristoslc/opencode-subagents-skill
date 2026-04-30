@@ -1,6 +1,6 @@
 # Runtime adapters
 
-Per-host integration notes for invoking `bin/opencode-dispatch` from
+Per-host integration notes for invoking `bin/dispatch-opencode` from
 common agentic CLIs. The skill is **runtime-neutral** — the binary
 takes the same arguments regardless of which host calls it. Adapters
 are thin shims: a slash command, a rules entry, or a config snippet
@@ -11,14 +11,14 @@ that hands the right args to the dispatch binary.
 | Host | Tested | Adapter |
 |------|--------|---------|
 | Claude Code | yes (this repo) | `templates/runtimes/claude-code/oc-dispatch.md` — copy to `.claude/commands/oc-dispatch.md` |
-| Codex CLI | no | `templates/runtimes/codex/README.md` — illustrative shell + toml snippets |
-| Gemini CLI | no | `templates/runtimes/gemini/README.md` — illustrative shell + rules snippet |
+| Codex CLI | no | `agents/openai.yaml` — UI metadata; `templates/runtimes/codex/README.md` — illustrative shell + toml snippets |
+| Gemini CLI | no | `templates/runtimes/gemini/oc-dispatch.toml` — custom command; `README.md` — rules snippet |
 | Cursor (agent mode) | no | `templates/runtimes/cursor/README.md` — illustrative rules snippet |
 
 Adapters marked "no" have **not** been validated against a real install
 of that host. Consumers should expect the schema/format to differ from
 what's documented and adjust. File issues at
-`cristoslc/opencode-subagents-skill` once a confirmed-working snippet
+`cristoslc/dispatch-opencode-skill` once a confirmed-working snippet
 is found, and the README will be updated.
 
 ## Why no host-specific shim is required
@@ -29,14 +29,14 @@ it. The "adapters" exist purely to capture the operator's preferred
 invocation surface in each host:
 
 - Claude Code: a slash command (`/oc-dispatch …`).
-- Codex: a named task in `codex.toml`.
-- Gemini: a rules entry pointing the agent at the binary.
+- Codex: an `agents/openai.yaml` metadata file plus `$dispatch-opencode` skill invocation.
+- Gemini: a custom command TOML (`/oc-dispatch …`).
 - Cursor: a rules file in `.cursor/rules/`.
 
 For all four, the underlying call is identical:
 
 ```sh
-"$REPO_ROOT/skills/opencode-dispatch/bin/opencode-dispatch" \
+"$REPO_ROOT/skills/dispatch-opencode/bin/dispatch-opencode" \
   --kind <single-file-fix|parallel-review-fanout|headless-spike> \
   --mode <acp|cli|http> \
   --cwd "$REPO_ROOT" \

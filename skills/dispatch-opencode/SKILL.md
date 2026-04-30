@@ -1,5 +1,5 @@
 ---
-name: opencode-dispatch
+name: dispatch-opencode
 description: >
   Dispatch a subagent task through opencode (https://opencode.ai) instead of
   the host CLI's built-in subagent runtime. The skill drives opencode over
@@ -12,11 +12,15 @@ description: >
   the preferred backend, or when the task benefits from a model the host
   doesn't natively support, or when parallel fanout with per-task
   isolation is required.
-version: 0.3.0
-status: draft
+license: MIT
+compatibility: Requires opencode CLI (https://opencode.ai), git, Python 3.11+, and uv
+metadata:
+  version: "0.3.0"
+  status: draft
+  author: cristoslc
 ---
 
-# opencode-dispatch
+# dispatch-opencode
 
 Routes subagent dispatch through opencode using **ACP (Agent Client
 Protocol) over a fixed HTTP port**. The skill is the ACP client; the
@@ -76,7 +80,7 @@ These hold across all modes.
    ACP `newSession` (or `--dir` in CLI mode).
 
 2. **Handoffs are on-disk artifacts.** Every dispatch writes the
-   request payload to disk under `.opencode-dispatch/<task-id>/` before
+   request payload to disk under `.dispatch-opencode/<task-id>/` before
    sending. In ACP mode the artifact is the rendered `prompt` request
    body (`prompt.json`); in CLI mode it is a `dispatch.sh`. Either way
    the task directory is the source of truth for replay and audit.
@@ -117,10 +121,10 @@ Per-kind required arguments are listed alongside each kind below.
    [--worktree <label> --worktree-root <absolute-root>]`. Exit non-zero
    aborts the dispatch.
 4. **Allocate task ID** — `<UTC-timestamp>-<short-hash-of-prompt>`.
-   Create `.opencode-dispatch/<task-id>/`.
+   Create `.dispatch-opencode/<task-id>/`.
 5. **Render prompt parts** — pick the template by kind from
    `templates/acp/<kind>.prompt.j2`. Render prompt text plus the file
-   part list into `.opencode-dispatch/<task-id>/prompt.json` (the ACP
+   part list into `.dispatch-opencode/<task-id>/prompt.json` (the ACP
    `prompt` request body). Also write `prompt.md` (the raw prompt
    text) and `parts.json` (the file/text parts that the prompt
    references) for human inspection.
@@ -140,7 +144,7 @@ Per-kind required arguments are listed alongside each kind below.
 
 9. **Send prompt** — POST the rendered `prompt.json` as the ACP
    `prompt` request. Stream the response events to
-   `.opencode-dispatch/<task-id>/events.jsonl` and any text deltas to
+   `.dispatch-opencode/<task-id>/events.jsonl` and any text deltas to
    `stdout.log`.
 10. **Handle permission asks** — when ACP delivers a `permission.ask`
     request, the skill consults the per-kind allowlist (see "Permission
@@ -246,11 +250,11 @@ Baked in by the skill's ACP client and rendered artifacts.
 
 ## Configuration
 
-Defaults live in `.opencode-dispatch/config.yaml` at the consumer-repo
+Defaults live in `.dispatch-opencode/config.yaml` at the consumer-repo
 root.
 
 ```yaml
-# .opencode-dispatch/config.yaml — example
+# .dispatch-opencode/config.yaml — example
 mode: acp                          # acp | cli | http
 acp:
   port: 4096                       # fixed; required for live attach
@@ -263,7 +267,7 @@ default_timeout_sec: 600
 worktree_root: .worktrees
 protected_frontmatter_keys:
   - last-updated
-templates_dir: skills/opencode-dispatch/templates
+templates_dir: skills/dispatch-opencode/templates
 ```
 
 The fixed `acp.port` is what makes ACP mode attachable. Changing it

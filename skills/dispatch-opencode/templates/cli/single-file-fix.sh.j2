@@ -28,10 +28,10 @@ export {{ k }}={{ v | shellquote }}
 {% endfor %}
 {% endif %}
 
-echo "[opencode-dispatch] task_id=$TASK_ID generated=$GENERATED_AT"
-echo "[opencode-dispatch] cwd=$CWD"
-echo "[opencode-dispatch] model=$MODEL agent=$AGENT timeout=${TIMEOUT_SEC}s"
-echo "[opencode-dispatch] target=$TARGET_FILE"
+echo "[dispatch-opencode] task_id=$TASK_ID generated=$GENERATED_AT"
+echo "[dispatch-opencode] cwd=$CWD"
+echo "[dispatch-opencode] model=$MODEL agent=$AGENT timeout=${TIMEOUT_SEC}s"
+echo "[dispatch-opencode] target=$TARGET_FILE"
 
 # Pipeline outputs (all written under TASK_DIR):
 #   events.jsonl — JSON event stream from `opencode run --format json`
@@ -48,7 +48,7 @@ TIMEOUT_BIN="$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null
 if [ -n "$TIMEOUT_BIN" ]; then
   TIMEOUT_PREFIX=("$TIMEOUT_BIN" "$TIMEOUT_SEC")
 else
-  echo "[opencode-dispatch] warn: no timeout(1)/gtimeout on PATH; running without timeout" >&2
+  echo "[dispatch-opencode] warn: no timeout(1)/gtimeout on PATH; running without timeout" >&2
   TIMEOUT_PREFIX=()
 fi
 "${TIMEOUT_PREFIX[@]+"${TIMEOUT_PREFIX[@]}"}" opencode run \
@@ -64,5 +64,5 @@ fi
   > "$TASK_DIR/stdout.log"
 EXIT=$?
 
-echo "[opencode-dispatch] exit=$EXIT"
+echo "[dispatch-opencode] exit=$EXIT"
 exit "$EXIT"

@@ -7,7 +7,7 @@ Run the bash tool with the following invocation. Substitute `$1`, `$2`, `$3` and
 
 ```sh
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-DISPATCH="$REPO_ROOT/skills/opencode-dispatch/bin/opencode-dispatch"
+DISPATCH="$REPO_ROOT/skills/dispatch-opencode/bin/dispatch-opencode"
 
 KIND="$1"; shift
 case "$KIND" in

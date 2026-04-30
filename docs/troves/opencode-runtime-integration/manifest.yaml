@@ -10,7 +10,7 @@ tags:
   - worktrees
   - parallel-execution
 description: >
-  Source materials for the opencode-subagents-skill — invocation transports,
+  Source materials for the dispatch-opencode-skill — invocation transports,
   session/CWD model, agent system, providers, known failure modes, and
   ecosystem wrappers. Informs SKILL.md design.
 

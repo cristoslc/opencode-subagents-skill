@@ -4,7 +4,7 @@
 # dependencies = ["jinja2>=3.1", "PyYAML>=6", "httpx>=0.27"]
 # ///
 """
-opencode-dispatch — route a subagent task through opencode.
+dispatch-opencode — route a subagent task through opencode.
 
 ACP mode (default): spawns `opencode acp --port <fixed>`, drives it over
 JSON-RPC on stdio, surfaces the attach URL so the operator can attach a
@@ -103,15 +103,15 @@ BASH_READONLY = re.compile(
 # Logging
 
 def log(msg: str) -> None:
-    print(f"[opencode-dispatch] {msg}", flush=True)
+    print(f"[dispatch-opencode] {msg}", flush=True)
 
 
 def warn(msg: str) -> None:
-    print(f"[opencode-dispatch] warn: {msg}", file=sys.stderr, flush=True)
+    print(f"[dispatch-opencode] warn: {msg}", file=sys.stderr, flush=True)
 
 
 def fail(msg: str, code: int = 1) -> None:
-    print(f"[opencode-dispatch] error: {msg}", file=sys.stderr, flush=True)
+    print(f"[dispatch-opencode] error: {msg}", file=sys.stderr, flush=True)
     sys.exit(code)
 
 
@@ -133,7 +133,7 @@ class Config:
 
 
 def load_config(repo_root: Path) -> Config:
-    path = repo_root / ".opencode-dispatch" / "config.yaml"
+    path = repo_root / ".dispatch-opencode" / "config.yaml"
     if not path.exists():
         return Config()
     with path.open() as fh:
@@ -748,8 +748,8 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
                     "terminal": False,
                 },
                 "clientInfo": {
-                    "name": "opencode-dispatch",
-                    "title": "opencode-dispatch",
+                    "name": "dispatch-opencode",
+                    "title": "dispatch-opencode",
                     "version": "0.3.0",
                 },
             },
@@ -947,7 +947,7 @@ async def dispatch_parallel_fanout(args: argparse.Namespace, cfg: Config,
 # CLI entrypoint
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="opencode-dispatch")
+    p = argparse.ArgumentParser(prog="dispatch-opencode")
     p.add_argument("--kind", required=True, choices=["single-file-fix", "parallel-review-fanout", "headless-spike"])
     p.add_argument("--mode", choices=["acp", "cli", "http"], default="acp")
     p.add_argument("--cwd", required=True, type=Path)
@@ -975,7 +975,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--prompt-file", required=True, type=Path)
     p.add_argument("--timeout", type=int)
     p.add_argument("--task-root", type=Path,
-                   help="Where to create the task directory (default: <cwd>/.opencode-dispatch)")
+                   help="Where to create the task directory (default: <cwd>/.dispatch-opencode)")
     return p.parse_args(argv)
 
 
@@ -1022,7 +1022,7 @@ def main(argv: list[str]) -> int:
     prompt_text = args.prompt_file.read_text(encoding="utf-8")
 
     # 3) Allocate task dir
-    task_root = args.task_root or (args.cwd / ".opencode-dispatch")
+    task_root = args.task_root or (args.cwd / ".dispatch-opencode")
     task_root.mkdir(exist_ok=True)
     task_id = allocate_task_id(prompt_text)
     task_dir = task_root / task_id

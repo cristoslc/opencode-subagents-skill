@@ -1,0 +1,28 @@
+# oc-dispatch — Dispatch a subagent task through opencode.
+#
+# Copy to .gemini/commands/oc-dispatch.toml in the consumer project.
+# Invoke with: /oc-dispatch <kind> <target-or-files> <prompt-file>
+#
+# Available kinds: single-file-fix, parallel-review-fanout, headless-spike
+#
+# After dispatch completes, surface the rendered task directory and the
+# opencode attach URL so the operator can drop into the live session.
+
+description = "Dispatch a subagent task through opencode (single-file-fix, parallel-review-fanout, or headless-spike)"
+
+prompt = """
+Run the following shell command. Substitute the arguments from the user's /oc-dispatch invocation.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+DISPATCH="$REPO_ROOT/skills/dispatch-opencode/bin/dispatch-opencode"
+
+KIND="{{args}}"
+
+Run: "$DISPATCH" --kind <kind> --mode acp --cwd "$REPO_ROOT" --branch "$(git -C "$REPO_ROOT" branch --show-current)" with the appropriate kind-specific flags:
+
+- single-file-fix: add --target-file <path> --prompt-file <path>
+- parallel-review-fanout: add --target-files <comma-separated-paths> --shared-decisions <path> --prompt-file <path>
+- headless-spike: add --report-path <path> --prompt-file <path>
+
+After dispatch completes, surface the task directory path and the `opencode attach <url> --session <id>` line from the output.
+"""

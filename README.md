@@ -1,4 +1,4 @@
-# opencode-subagents-skill
+# dispatch-opencode
 
 A skill that lets agentic CLIs — Claude Code, Codex, Gemini, and others — run subagents through [opencode](https://opencode.ai) instead of their built-in subagent systems.
 

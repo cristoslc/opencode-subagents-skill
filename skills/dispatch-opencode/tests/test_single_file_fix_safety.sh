@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DISPATCH="$SCRIPT_DIR/../bin/opencode-dispatch"
+DISPATCH="$SCRIPT_DIR/../bin/dispatch-opencode"
 KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
 
 err() { printf 'test: FAIL %s\n' "$*" >&2; exit 1; }
@@ -64,8 +64,8 @@ src/foo.py has a bug — \`add\` uses subtraction instead of addition. Do exactl
 If any are rejected, note that in a brief summary at the end and continue with the rest.
 MD
 
-mkdir -p .opencode-dispatch
-cat > .opencode-dispatch/config.yaml <<'YAML'
+mkdir -p .dispatch-opencode
+cat > .dispatch-opencode/config.yaml <<'YAML'
 mode: acp
 acp:
   port: 4097

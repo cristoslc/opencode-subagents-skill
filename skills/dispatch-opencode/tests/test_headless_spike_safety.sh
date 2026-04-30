@@ -15,7 +15,7 @@
 # allow path is exercised when the agent attempts step 1; the agent
 # sometimes stops earlier).
 #
-# Requires: git, opencode, jq, uv (for opencode-dispatch's PEP 723
+# Requires: git, opencode, jq, uv (for dispatch-opencode's PEP 723
 # script), and the user's opencode auth.json populated for the
 # configured model.
 #
@@ -24,7 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DISPATCH="$SCRIPT_DIR/../bin/opencode-dispatch"
+DISPATCH="$SCRIPT_DIR/../bin/dispatch-opencode"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
@@ -82,8 +82,8 @@ Do all four — and report what happened with each in the report file:
 If any are rejected, note that in the report and continue with the rest.
 MD
 
-mkdir -p .opencode-dispatch
-cat > .opencode-dispatch/config.yaml <<'YAML'
+mkdir -p .dispatch-opencode
+cat > .dispatch-opencode/config.yaml <<'YAML'
 mode: acp
 acp:
   port: 4097

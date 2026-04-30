@@ -47,7 +47,7 @@ Mechanics:
 
 - Templates live under the skill (e.g., `templates/dispatch.sh.j2`) and render via Jinja2 (`j2`) or an equivalent.
 - One template per dispatch *kind* (e.g., `single-file-fix`, `parallel-review-fanout`, `headless-spike`), not one template global to everything.
-- The rendered artifact is written to a per-task directory (e.g., `.opencode-dispatch/<task-id>/dispatch.sh` plus `prompt.md`, `files.txt`, `env`).
+- The rendered artifact is written to a per-task directory (e.g., `.dispatch-opencode/<task-id>/dispatch.sh` plus `prompt.md`, `files.txt`, `env`).
 - The host parent's "tool call" reduces to: render template → write to disk → exec the script → tail the output.
 - The script is the source of truth for what was dispatched. Replays reuse it. Audits read it.
 
@@ -104,7 +104,7 @@ Open questions for the design phase:
 
 1. Do we ship a per-host adapter (Claude Code, Codex, Gemini) that knows how to invoke the rendered script, or a single neutral entrypoint that hosts call uniformly?
 2. Do we vend the templates inside the skill, or expect the consumer project to author them with sensible defaults?
-3. Where do task-id directories live — under `.opencode-dispatch/` in the consumer repo, or somewhere the skill can clean up automatically?
+3. Where do task-id directories live — under `.dispatch-opencode/` in the consumer repo, or somewhere the skill can clean up automatically?
 4. Cleanup policy for completed dispatches (keep artifacts forever, garbage-collect after N days, etc.)?
 
 These are good first SPECs.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-cwd.sh — fail-closed CWD verification for opencode-dispatch.
+# verify-cwd.sh — fail-closed CWD verification for dispatch-opencode.
 # Exits 0 only if PATH_ARG is an absolute, existing git work tree that
 # matches the expected branch and/or worktree label, and (when worktree
 # verification is requested) is rooted under the configured worktree-root.

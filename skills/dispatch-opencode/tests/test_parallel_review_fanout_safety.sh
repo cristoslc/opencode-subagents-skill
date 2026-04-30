@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DISPATCH="$SCRIPT_DIR/../bin/opencode-dispatch"
+DISPATCH="$SCRIPT_DIR/../bin/dispatch-opencode"
 KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
 
 err() { printf 'test: FAIL %s\n' "$*" >&2; exit 1; }
@@ -76,8 +76,8 @@ cat > opencode.json <<'JSON'
 }
 JSON
 
-mkdir -p .opencode-dispatch
-cat > .opencode-dispatch/config.yaml <<'YAML'
+mkdir -p .dispatch-opencode
+cat > .dispatch-opencode/config.yaml <<'YAML'
 mode: acp
 acp:
   port: 4097
