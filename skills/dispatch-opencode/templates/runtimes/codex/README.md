@@ -15,7 +15,7 @@ $dispatch-opencode
 ```
 
 Or Codex will auto-select it when the task matches the skill's
-description.
+description and the operator explicitly invokes `$dispatch-opencode`.
 
 ## Direct invocation
 
@@ -36,8 +36,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 The skill ships an `agents/openai.yaml` file that provides Codex App
 metadata (display name, short description, default prompt) and an
-invocation policy. This file is optional — the skill works without it
-in plain Codex CLI — but it improves the UX in the Codex App.
+invocation policy (implicit invocation disabled — operator must
+explicitly invoke the skill). This file is optional — the skill works
+without it in plain Codex CLI — but it improves the UX in the Codex App.
 
 ## Status
 

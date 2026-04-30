@@ -43,7 +43,7 @@ subagent task is requested:
   "rules": [
     {
       "when": "user asks for a focused single-file edit through opencode",
-      "do": "Run the bash tool with skills/dispatch-opencode/bin/dispatch-opencode --kind single-file-fix --mode acp --cwd $REPO_ROOT --branch $(git branch --show-current) --target-file <path> --prompt-file <path>. Surface the printed `opencode attach <url> --session <id>` line so the user can attach to the live session."
+      "do": "Run the bash tool with skills/dispatch-opencode/bin/dispatch-opencode --kind single-file-fix --mode acp --cwd $REPO_ROOT --branch $(git -C $REPO_ROOT branch --show-current) --target-file <path> --prompt-file <path>. Surface the printed `opencode attach <url> --session <id>` line so the user can attach to the live session."
     }
   ]
 }

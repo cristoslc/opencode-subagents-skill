@@ -1,5 +1,6 @@
 """Unit-test the permission allowlist without going through the model."""
 
+import shutil
 import asyncio
 import sys
 from importlib.machinery import SourceFileLoader
@@ -253,7 +254,6 @@ for kind, cases in [
         if not ok:
             failures += 1
 
-target.unlink()
-target.parent.rmdir()
-target.parent.parent.rmdir()
+target.unlink(missing_ok=True)
+shutil.rmtree(target.parent.parent, ignore_errors=True)
 sys.exit(1 if failures else 0)

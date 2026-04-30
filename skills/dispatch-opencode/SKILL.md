@@ -267,7 +267,7 @@ default_timeout_sec: 600
 worktree_root: .worktrees
 protected_frontmatter_keys:
   - last-updated
-templates_dir: skills/dispatch-opencode/templates
+templates_dir: skills/dispatch-opencode/templates   # adjust if installed elsewhere, e.g. .agents/skills/dispatch-opencode/templates
 ```
 
 The fixed `acp.port` is what makes ACP mode attachable. Changing it

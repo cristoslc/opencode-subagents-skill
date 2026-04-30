@@ -739,6 +739,7 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
         # fall back to its own filesystem tools (which the per-kind
         # allowlist gates correctly). Advertising true caused opencode
         # to send fs/write_text_file requests we couldn't honour.
+        session_id = None
         init_resp = await client.request(
             "initialize",
             {
@@ -791,7 +792,8 @@ async def dispatch_acp(args: argparse.Namespace, cfg: Config, task_dir: Path,
     except asyncio.TimeoutError:
         warn(f"timeout after {args.timeout}s; cancelling session")
         try:
-            await client.notify("session/cancel", {"sessionId": session_id})  # noqa: F821
+            if session_id is not None:
+                await client.notify("session/cancel", {"sessionId": session_id})
         except Exception:
             pass
         return 124
